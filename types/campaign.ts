@@ -59,10 +59,12 @@ export interface EmailGenerationRequest {
 export interface WorkflowResults {
   step1_research: {
     success: boolean;
-    researchId: string;
-    contentLength: number;
-    cost: number;
-    duration: number;
+    researchId?: string;
+    content?: string;
+    contentLength?: number;
+    cost?: number;
+    duration?: number;
+    fromCache?: boolean;
   };
   step2_memories: {
     success: boolean;
