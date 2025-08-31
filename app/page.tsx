@@ -13,6 +13,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Button } from '@/components/ui/button';
 import { Loader2, Search, Brain, Mail, CheckCircle, Clock, Eye, RefreshCw, AlertTriangle } from 'lucide-react';
 import { CampaignFormData } from '@/types/campaign';
+import { extractCampaignJson, mapCampaignToEmails } from '@/lib/letta-client';
 
 type AppStep = 'welcome' | 'form' | 'research-loading' | 'research-results' | 'agent-processing' | 'email-results';
 
@@ -22,6 +23,7 @@ export default function HomePage() {
   const [workflowResults, setWorkflowResults] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [workflowError, setWorkflowError] = useState<any>(null);
   const [showEmailCopy, setShowEmailCopy] = useState(false);
   const [useStreaming, setUseStreaming] = useState(true); // Enable streaming by default
   const streamingWorkflow = useStreamingWorkflow();
@@ -133,6 +135,7 @@ export default function HomePage() {
     setFormData(data);
     setIsLoading(true);
     setError(null);
+    setWorkflowError(null);
     setCurrentStep('research-loading');
 
     try {
@@ -209,6 +212,12 @@ export default function HomePage() {
                 // Research results will show when workflow_complete arrives
               }
               
+              // Handle workflow errors
+              if (data.type === 'workflow_error') {
+                console.error('workflow_error:', data.phase, data.error, data.stack);
+                setWorkflowError({ phase: data.phase, message: data.error, stack: data.stack });
+              }
+              
               // Capture the canonical final_emails event
               if (data.type === 'final_emails') {
                 finalEmails = data.emails;
@@ -219,9 +228,38 @@ export default function HomePage() {
               if (data.type === 'workflow_complete') {
                 workflowData = data;
                 
-                // Inject final_emails if we have them
-                if (finalEmails && workflowData.results?.step5_email_generation) {
-                  workflowData.results.step5_email_generation.finalEmails = finalEmails;
+                // Enhanced email handling - try multiple sources
+                if (workflowData.results?.step5_email_generation) {
+                  const fromServer = workflowData.results.step5_email_generation.assistantMessages || [];
+                  const raw = workflowData.results.step5_email_generation.rawAssistantText || '';
+                  
+                  // Prefer emails from final_emails event; otherwise use server results; otherwise parse locally
+                  let emails = finalEmails || [];
+                  if (!emails.length && fromServer.length) {
+                    emails = fromServer.map((e: any, index: number) => ({ 
+                      subject: e.subject, 
+                      body: e.content || e.body, 
+                      email_number: index + 1 
+                    }));
+                  }
+                  if (!emails.length && raw) {
+                    try {
+                      const parsed = extractCampaignJson(raw);
+                      if (parsed) {
+                        const mappedEmails = mapCampaignToEmails(parsed);
+                        emails = mappedEmails.map((email, index) => ({
+                          subject: email.subject,
+                          body: email.body,
+                          email_number: index + 1
+                        }));
+                      }
+                    } catch (parseError) {
+                      console.warn('Client-side parsing failed:', parseError);
+                    }
+                  }
+                  
+                  // Inject the final emails into results
+                  workflowData.results.step5_email_generation.finalEmails = emails;
                   workflowData.results.step5_email_generation.rawAssistantText = rawAssistantText;
                 }
                 

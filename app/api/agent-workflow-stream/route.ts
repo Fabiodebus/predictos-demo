@@ -161,133 +161,98 @@ export async function POST(request: NextRequest) {
         console.log("🧾 numberOfEmails:", campaignData.numberOfEmails);
         console.log("🧍", campaignData.leadName, campaignData.leadTitle, campaignData.companyName);
         
-        const reasoningMessages: any[] = [];
-        const assistantMessages: any[] = [];
         let messageCount = 0;
         let accumulatedReasoning = '';
         let accumulatedEmail = '';
-        
+        let completed = false;
+
+        const finish = (emails: any[] = [], rawAssistantText = '') => {
+          results.step5_email_generation = {
+            ...(results.step5_email_generation ?? {}),
+            success: emails.length > 0,
+            messageCount,
+            reasoning: [{ content: accumulatedReasoning }],
+            assistantMessages: emails.map(e => ({ subject: e.subject, content: e.body, cta_type: e.cta_type })),
+            toolCalls: [],
+            campaignData,
+            rawAssistantText,
+          };
+          sendUpdate({ type: 'final_emails', emails: emails.map((e, index) => ({ 
+            subject: e.subject, 
+            body: e.body,
+            email_number: index + 1
+          })), rawAssistantText });
+          sendUpdate({ type: 'workflow_complete', success: emails.length > 0, results });
+          controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+          completed = true;
+        };
+
         try {
-          // Send agent start
           sendUpdate({ type: 'agent_thinking', message: 'Agent connected and processing...' });
-          
-          // Use streaming generation
+
           for await (const message of lettaService.streamEmailGeneration(prompt)) {
             messageCount++;
-            
-            // Handle ping events for keep-alive (cast to any to handle ping type)
+
+            // keep-alive
             if ((message as any).messageType === 'ping') {
               sendUpdate({ type: 'ping', t: Date.now() });
               continue;
             }
-            
+
             if (message.messageType === 'reasoning_message') {
-              // Use textified content from stream (generator already accumulates)
-              const rDelta = textify(message.content ?? message.reasoning);
-              if (rDelta) {
-                accumulatedReasoning = rDelta; // Generator already accumulates, just assign
-                sendUpdate({ 
-                  type: 'reasoning_step', 
-                  step: 1,
-                  content: accumulatedReasoning,
-                  timestamp: message.timestamp
-                });
+              const r = textify(message.content ?? (message as any).reasoning);
+              if (r) {
+                accumulatedReasoning = r; // generator is cumulative
+                sendUpdate({ type: 'reasoning_step', content: accumulatedReasoning, timestamp: message.timestamp });
               }
             } else if (message.messageType === 'assistant_message') {
-              // Use textified content from stream (generator already accumulates)
-              const aDelta = textify(message.content);
-              if (aDelta) {
-                accumulatedEmail = aDelta; // Generator already accumulates, just assign
-                sendUpdate({ 
-                  type: 'email_generated',
-                  content: accumulatedEmail
-                });
+              const a = textify(message.content);
+              if (a) {
+                accumulatedEmail = a; // generator is cumulative
+                sendUpdate({ type: 'email_generated', content: accumulatedEmail });
               }
             }
           }
-          
-          // Combine all sources for robust parsing
-          const fullTranscript = [accumulatedEmail, accumulatedReasoning].filter(Boolean).join("\n");
-          
-          // Log for debugging
-          console.log('🔍 Final accumulated email:', {
-            first200: accumulatedEmail?.slice(0, 200),
-            last200: accumulatedEmail?.slice(-200),
-            length: accumulatedEmail?.length
-          });
-          console.log('🔍 Final accumulated reasoning:', {
-            first200: accumulatedReasoning?.slice(0, 200),
-            last200: accumulatedReasoning?.slice(-200),
-            length: accumulatedReasoning?.length
-          });
-          
-          // Try tolerant parsing on multiple sources
-          const parsed = 
-            extractCampaignJson(fullTranscript) ||
-            extractCampaignJson(accumulatedEmail) ||
-            extractCampaignJson(accumulatedReasoning);
-          
+
+          // parse server-side
+          const full = [accumulatedEmail, accumulatedReasoning].filter(Boolean).join('\n');
+          const parsed =
+            extractCampaignJson(full) || extractCampaignJson(accumulatedEmail) || extractCampaignJson(accumulatedReasoning);
           const emails = parsed ? mapCampaignToEmails(parsed) : [];
-          
-          console.log('🧩 Parsing results:', {
-            parsed: !!parsed,
-            emailCount: emails.length,
-            willFallbackToRaw: emails.length === 0
-          });
-          
-          results.step5_email_generation = {
-            success: emails.length > 0,
-            messageCount,
-            reasoning: [{ content: accumulatedReasoning }],
-            assistantMessages: emails.map(e => ({ 
-              subject: e.subject, 
-              content: e.body,
-              cta_type: e.cta_type
-            })),
-            toolCalls: [],
-            campaignData,
-            rawAssistantText: accumulatedEmail,      // For UI fallback
-            rawTranscript: fullTranscript,           // For UI fallback
-            final_assistant_text: accumulatedEmail   // Legacy support
-          };
-          
-          // NEW: Canonical event the UI can trust
-          sendUpdate({ 
-            type: 'final_emails', 
-            emails: emails.map((e, index) => ({ 
-              subject: e.subject, 
-              body: e.body,
-              email_number: index + 1
-            })),
-            rawAssistantText: accumulatedEmail 
-          });
-          
-          // Send final completion
-          sendUpdate({ 
-            type: 'workflow_complete',
-            success: emails.length > 0,
-            results
-          });
-          
-          // Add terminal frame before closing
-          controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
-          
-        } catch (error) {
-          console.error('❌ Streaming email generation failed:', error);
-          results.step5_email_generation = {
-            success: false,
-            error: error instanceof Error ? error.message : 'Streaming failed',
-            messageCount: 0,
-            reasoning: reasoningMessages,
-            assistantMessages,
-            toolCalls: []
-          };
-          
-          sendUpdate({ 
+          finish(emails, accumulatedEmail);
+
+        } catch (err: any) {
+          // surface error
+          sendUpdate({
             type: 'workflow_error',
-            error: error instanceof Error ? error.message : 'Unknown error',
-            results
+            phase: 'stream_loop',
+            error: err?.message || String(err),
+            stack: (err?.stack || '').split('\n').slice(0, 3).join('\n'),
           });
+
+          // last-resort: non-stream fallback so UI still gets emails
+          try {
+            const resp = await lettaService.generateEmail(prompt);
+            const assistantText = textify(resp.messages.find(m => m.messageType === 'assistant_message')?.content || '');
+            const parsed =
+              extractCampaignJson(assistantText) ||
+              extractCampaignJson(resp.messages.find(m => m.messageType === 'reasoning_message')?.content || '');
+            const emails = parsed ? mapCampaignToEmails(parsed) : [];
+            finish(emails, assistantText);
+          } catch (fallbackErr: any) {
+            sendUpdate({
+              type: 'workflow_error',
+              phase: 'fallback_non_stream',
+              error: fallbackErr?.message || String(fallbackErr),
+              stack: (fallbackErr?.stack || '').split('\n').slice(0, 3).join('\n'),
+            });
+          }
+        } finally {
+          if (!completed) {
+            // ensure UI exits the "busy" state even if both paths failed
+            sendUpdate({ type: 'workflow_complete', success: false, results });
+            controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+          }
         }
         
         controller.close();
