@@ -24,6 +24,8 @@ export default function CampaignForm({ onSubmit, isLoading = false }: CampaignFo
     leadName: '',
     leadTitle: '',
     companyName: '',
+    senderName: '',
+    senderEmail: '',
     numberOfEmails: 1,
     numberOfThreads: 1,
     language: 'english',
