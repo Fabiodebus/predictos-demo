@@ -356,7 +356,7 @@ export default function HomePage() {
             {showEmailCopy && streamingWorkflow.workflowResults && (
               <EmailOutput 
                 workflowResults={streamingWorkflow.workflowResults}
-                campaignData={formData}
+                campaignData={formData || undefined}
                 onStartOver={handleBackToWelcome}
               />
             )}
