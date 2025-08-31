@@ -367,7 +367,7 @@ export default function HomePage() {
             {workflowResults && (
               <AgentReasoning 
                 workflowResults={workflowResults}
-                formData={formData}
+                formData={formData || undefined}
                 isLoading={false}
               />
             )}
