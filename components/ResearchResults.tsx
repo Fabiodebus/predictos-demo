@@ -16,9 +16,9 @@ interface ResearchResultsProps {
 
 // Helper function to parse markdown content into sections
 function parseMarkdownSections(content: string) {
-  const sections = [];
+  const sections: Array<{ title: string; content: string[] }> = [];
   const lines = content.split('\n');
-  let currentSection = null;
+  let currentSection: { title: string; content: string[] } | null = null;
   
   for (const line of lines) {
     if (line.startsWith('### ')) {
