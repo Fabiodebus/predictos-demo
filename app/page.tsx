@@ -437,7 +437,7 @@ export default function HomePage() {
             {showEmailCopy && workflowResults && (
               <EmailOutput 
                 workflowResults={workflowResults}
-                campaignData={formData}
+                campaignData={formData || undefined}
                 onStartOver={handleBackToWelcome}
               />
             )}
@@ -461,7 +461,7 @@ export default function HomePage() {
 
         <EmailOutput 
           workflowResults={workflowResults}
-          campaignData={formData}
+          campaignData={formData || undefined}
           onStartOver={handleBackToWelcome}
         />
       </div>
