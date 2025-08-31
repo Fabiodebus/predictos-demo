@@ -172,6 +172,8 @@ export default function HomePage() {
       let workflowData = null;
       let finalEmails = null;
       let rawAssistantText = null;
+      let partialResults: any = {};
+      let hasResearchCompleted = false;
 
       if (!reader) {
         throw new Error('No response body reader available');
@@ -196,6 +198,16 @@ export default function HomePage() {
             
             try {
               const data = JSON.parse(dataStr);
+              console.log('📡 SSE Event:', data.type, data.step || '', data.message || '');
+              
+              // Track research completion
+              if (data.type === 'research_complete') {
+                hasResearchCompleted = true;
+                partialResults.step1_research = data.results;
+                console.log('✅ Research completed successfully');
+                // Update UI state but stay on research-loading for now
+                // Research results will show when workflow_complete arrives
+              }
               
               // Capture the canonical final_emails event
               if (data.type === 'final_emails') {
@@ -212,18 +224,30 @@ export default function HomePage() {
                   workflowData.results.step5_email_generation.finalEmails = finalEmails;
                   workflowData.results.step5_email_generation.rawAssistantText = rawAssistantText;
                 }
+                
+                // Merge any partial results we collected
+                if (partialResults.step1_research && workflowData.results) {
+                  workflowData.results.step1_research = partialResults.step1_research;
+                }
               }
             } catch (e) {
               console.warn('Failed to parse SSE data:', line, e);
+              // Don't break the stream for parse errors - continue processing
             }
           }
         }
       }
 
+      // Better error handling - check what we actually received
       if (workflowData) {
         console.log('Complete workflow results:', workflowData);
         setWorkflowResults(workflowData.results);
+      } else if (hasResearchCompleted) {
+        // Research completed but full workflow didn't - this is recoverable
+        console.warn('Research completed but full workflow missing - using partial results');
+        setWorkflowResults({ step1_research: partialResults.step1_research });
       } else {
+        // Nothing worked - now we can error
         throw new Error('No workflow results received');
       }
       
@@ -232,8 +256,15 @@ export default function HomePage() {
 
     } catch (error) {
       console.error('Campaign generation error:', error);
-      setError(error instanceof Error ? error.message : 'An unexpected error occurred');
-      setCurrentStep('form');
+      const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
+      setError(errorMessage);
+      
+      // Don't reset to form immediately - show error in current context
+      // Only reset to form for critical authentication/setup errors
+      if (errorMessage.includes('401') || errorMessage.includes('403') || errorMessage.includes('API key')) {
+        setCurrentStep('form');
+      }
+      // For other errors, stay on current step so user can retry
     } finally {
       setIsLoading(false);
     }
@@ -241,31 +272,72 @@ export default function HomePage() {
 
   const renderResearchLoadingScreen = () => (
     <div className="min-h-screen bg-background flex items-center justify-center transition-colors duration-300">
-      <div className="text-center space-y-8">
-        {/* Simple loading indicator */}
-        <div className="relative">
-          <div className="w-16 h-16 mx-auto mb-8 relative">
-            <div className="absolute inset-0 bg-[#0201ff]/20 rounded-full animate-ping"></div>
-            <div className="absolute inset-2 bg-[#0201ff]/40 rounded-full animate-pulse"></div>
-            <div className="absolute inset-4 bg-[#0201ff] rounded-full flex items-center justify-center">
-              <Search className="w-6 h-6 text-white" />
+      <div className="text-center space-y-8 max-w-md mx-auto px-4">
+        {!error ? (
+          <>
+            {/* Loading indicator */}
+            <div className="relative">
+              <div className="w-16 h-16 mx-auto mb-8 relative">
+                <div className="absolute inset-0 bg-[#0201ff]/20 rounded-full animate-ping"></div>
+                <div className="absolute inset-2 bg-[#0201ff]/40 rounded-full animate-pulse"></div>
+                <div className="absolute inset-4 bg-[#0201ff] rounded-full flex items-center justify-center">
+                  <Search className="w-6 h-6 text-white" />
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
 
-        {/* Simple text */}
-        <div className="space-y-4">
-          <h2 className="text-2xl font-semibold text-foreground">
-            Company Research Started...
-          </h2>
-          <p className="text-muted-foreground">
-            Please wait while we gather company intelligence
-          </p>
-        </div>
+            <div className="space-y-4">
+              <h2 className="text-2xl font-semibold text-foreground">
+                Company Research Started...
+              </h2>
+              <p className="text-muted-foreground">
+                Please wait while we gather company intelligence
+              </p>
+            </div>
 
-        <p className="text-muted-foreground text-sm">
-          This may take 2-4 minutes depending on research complexity...
-        </p>
+            <p className="text-muted-foreground text-sm">
+              This may take 2-4 minutes depending on research complexity...
+            </p>
+          </>
+        ) : (
+          <>
+            {/* Error state */}
+            <div className="w-16 h-16 mx-auto mb-8 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center">
+              <AlertTriangle className="w-6 h-6 text-red-600 dark:text-red-400" />
+            </div>
+
+            <div className="space-y-4">
+              <h2 className="text-2xl font-semibold text-foreground">
+                Research Issue
+              </h2>
+              <p className="text-muted-foreground text-sm">
+                {error}
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <Button
+                onClick={() => {
+                  setError(null);
+                  if (formData) handleFormSubmit(formData);
+                }}
+                className="bg-[#0201ff] hover:bg-[#0201ff]/90 text-white"
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Retry Research
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setCurrentStep('form');
+                  setError(null);
+                }}
+              >
+                Back to Form
+              </Button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
