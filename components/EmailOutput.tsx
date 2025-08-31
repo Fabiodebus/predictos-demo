@@ -80,7 +80,7 @@ export default function EmailOutput({ workflowResults, campaignData, onStartOver
         console.log('Found thread structure:', threadData);
         
         // Convert thread structure to email_sequence format
-        const emails = [];
+        const emails: any[] = [];
         Object.keys(threadData).forEach(threadKey => {
           const thread = threadData[threadKey];
           Object.keys(thread).forEach(emailKey => {
