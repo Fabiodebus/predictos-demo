@@ -3,6 +3,7 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { MoveRight, Brain, Mail } from 'lucide-react';
+import AnimatedGridPattern from '@/components/ui/animated-grid-pattern';
 
 interface WelcomeScreenProps {
   onEnter: () => void;
@@ -10,8 +11,11 @@ interface WelcomeScreenProps {
 
 export default function WelcomeScreen({ onEnter }: WelcomeScreenProps) {
   return (
-    <div className="w-full min-h-screen bg-background">
-      <div className="container mx-auto">
+    <div className="w-full min-h-screen bg-background relative">
+      {/* Animated Grid Background */}
+      <AnimatedGridPattern className="z-0" />
+      
+      <div className="container mx-auto relative z-10">
         <div className="flex gap-8 py-20 lg:py-40 items-center justify-center flex-col">
           {/* Badge */}
           <div>
@@ -31,13 +35,10 @@ export default function WelcomeScreen({ onEnter }: WelcomeScreenProps) {
             </p>
           </div>
           
-          {/* Action buttons */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <Button size="lg" className="gap-4" onClick={onEnter}>
-              Start Creating Campaigns <MoveRight className="w-4 h-4" />
-            </Button>
-            <Button size="lg" className="gap-4" variant="outline">
-              See Demo <Mail className="w-4 h-4" />
+          {/* Action button */}
+          <div className="flex justify-center">
+            <Button size="lg" className="gap-4 px-8 py-4 text-lg" onClick={onEnter}>
+              Test the PREDICT OS Agent <Brain className="w-5 h-5" />
             </Button>
           </div>
           

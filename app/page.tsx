@@ -428,12 +428,9 @@ export default function HomePage() {
     <div className="min-h-screen bg-background py-8 px-4">
       <div className="max-w-4xl mx-auto space-y-8">
         <div className="text-center">
-          <TextShimmerWave 
-            className="text-3xl font-bold text-foreground" 
-            duration={1.5}
-          >
-            AI Copywriting Agent
-          </TextShimmerWave>
+          <h1 className="text-3xl font-bold text-foreground">
+            PREDICT OS - Copywriting Agent in Action
+          </h1>
           <p className="text-muted-foreground mt-4">
             {useStreaming 
               ? 'Watch your AI agent analyze research and craft personalized content in real-time'

@@ -190,14 +190,24 @@ export class LettaService {
           const delta = extractReasoning(evt);
           console.log('📝 Reasoning message:', { type, delta: delta?.slice(0, 100) + '...', total: reasonBuf.length });
           if (delta) {
-            reasonBuf += delta;
+            // If the model returns the full-so-far, replace; else append
+            if (delta.startsWith(reasonBuf)) {
+              reasonBuf = delta; // cumulative update
+            } else {
+              reasonBuf += delta; // true delta
+            }
             yield toLettaMessageType({ ...evt, message_type: type, reasoning: reasonBuf });
           }
         } else if (type === "assistant_message") {
           const delta = extractAssistantDelta(evt);
           console.log('🤖 Assistant message:', { type, delta: delta?.slice(0, 100) + '...', total: ansBuf.length });
           if (delta) {
-            ansBuf += delta;
+            // If the model returns the full-so-far, replace; else append
+            if (delta.startsWith(ansBuf)) {
+              ansBuf = delta; // cumulative update
+            } else {
+              ansBuf += delta; // true delta
+            }
             yield toLettaMessageType({ ...evt, message_type: type, assistant_message: ansBuf });
           }
         } else {
@@ -295,82 +305,62 @@ export class LettaService {
 }
 
 // Robust JSON extractor (string-aware, balanced braces, handles markdown and malformed JSON)
+// Balanced scanner that yields top-level JSON objects from an arbitrary string
+function* balancedObjects(src: string): Generator<{ start: number; end: number }> {
+  let inStr = false, esc = false, depth = 0, start = -1;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inStr) {
+      esc = ch === '\\' ? !esc : false;
+      if (!esc && ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{') { if (depth === 0) start = i; depth++; continue; }
+    if (ch === '}') { depth--; if (depth === 0 && start !== -1) { yield { start, end: i + 1 }; start = -1; } }
+  }
+}
+
 export function extractCampaignJson(s: string): any | null {
   if (!s) return null;
 
-  const candidates: string[] = [];
-
-  // 1) Prefer fenced JSON blocks
-  const fenceRe = /```(?:json)?\s*([\s\S]*?)```/gi;
-  let m: RegExpExecArray | null;
-  while ((m = fenceRe.exec(s))) candidates.push(m[1]);
-
-  // 2) If no fenced blocks, scan for likely schema hints, then balance braces forward
-  const startHints = [
-    '"campaign"', '"email_sequence"', '"emails"', '"thread_1"',
-    '{\n  "campaign"', '{\n  "email_sequence"',
-    '"kampagne"', '"faden_1"', '"sequenz"', '"emails_de"'
-  ];
-
-  function balancedFrom(idx: number): string | null {
-    let depth = 0, inStr = false, esc = false, end = -1;
-    for (let i = idx; i < s.length; i++) {
-      const ch = s[i];
-      if (inStr) { esc = ch === '\\' ? !esc : false; if (!esc && ch === '"') inStr = false; continue; }
-      if (ch === '"') { inStr = true; continue; }
-      if (ch === '{') depth++;
-      else if (ch === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
-    }
-    return end > idx ? s.slice(idx, end) : null;
-  }
-
-  for (const hint of startHints) {
-    const j = s.indexOf(hint);
-    if (j !== -1) {
-      const open = s.lastIndexOf('{', j);
-      if (open !== -1) {
-        const blob = balancedFrom(open);
-        if (blob) candidates.push(blob);
-      }
-    }
-  }
-
-  // 3) Last resort: take the last balanced object in the string
-  if (!candidates.length) {
-    const firstOpen = s.indexOf('{');
-    if (firstOpen !== -1) {
-      let depth = 0, inStr = false, esc = false, lastStart = -1, lastEnd = -1;
-      for (let i = firstOpen; i < s.length; i++) {
-        const ch = s[i];
-        if (inStr) { esc = ch === '\\' ? !esc : false; if (!esc && ch === '"') inStr = false; continue; }
-        if (ch === '"') { inStr = true; continue; }
-        if (ch === '{') { if (depth === 0) lastStart = i; depth++; }
-        else if (ch === '}') { depth--; if (depth === 0) lastEnd = i + 1; }
-      }
-      if (lastStart !== -1 && lastEnd !== -1) candidates.push(s.slice(lastStart, lastEnd));
-    }
-  }
-
-  // 4) Try parsing candidates with light sanitization
-  const tryParse = (raw: string) => {
-    const trims = raw.trim();
-    try { return JSON.parse(trims); } catch {}
-    // remove trailing commas
-    try { return JSON.parse(trims.replace(/,\s*([}\]])/g, '$1')); } catch {}
-    // quote unquoted keys + switch single → double quotes where safe
-    try {
-      const q = trims
-        .replace(/(['"])?([a-zA-Z0-9_]+)\1\s*:/g, '"$2":')               // unquoted->quoted keys
-        .replace(/'([^'\\]*(\\.[^'\\]*)*)'/g, '"$1"');                    // single->double
-      return JSON.parse(q);
+  // 1) try ```json fenced blocks
+  const blocks = Array.from(s.matchAll(/```json\s*([\s\S]*?)```/gi)).map(m => m[1].trim());
+  for (const b of blocks) {
+    try { 
+      const o = JSON.parse(b); 
+      if (o && (o.campaign || /"campaign"\s*:/.test(b))) return o; 
     } catch {}
-    return null;
-  };
-
-  for (const c of candidates) {
-    const parsed = tryParse(c);
-    if (parsed && typeof parsed === 'object') return parsed;
   }
+
+  // 2) scan whole string for balanced objects and pick the first that parses & contains "campaign"
+  for (const { start, end } of balancedObjects(s)) {
+    const candidate = s.slice(start, end);
+    if (!candidate.includes('"campaign"')) continue;
+    try { 
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object' && parsed.campaign) return parsed;
+    } catch {}
+  }
+
+  // 3) last resort: try progressive truncation from the right on the *last* candidate that contains "campaign"
+  const lastIdx = s.lastIndexOf('{"campaign"');
+  if (lastIdx !== -1) {
+    console.log('🔧 Attempting progressive truncation from position', lastIdx);
+    // shrink from the end until parse succeeds or we give up
+    for (let e = s.length; e > lastIdx + 20; e -= 50) {
+      const chunk = s.slice(lastIdx, e);
+      try { 
+        const parsed = JSON.parse(chunk);
+        if (parsed && typeof parsed === 'object') {
+          console.log('✅ Progressive truncation succeeded at length', chunk.length);
+          return parsed;
+        }
+      } catch {}
+    }
+  }
+
+  console.warn('❌ Could not extract valid campaign JSON from', s.length, 'characters');
   return null;
 }
 

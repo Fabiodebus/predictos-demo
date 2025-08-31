@@ -184,6 +184,16 @@ export default function EmailOutput({ workflowResults, campaignData, onStartOver
       }
     }
 
+    // 4) Last resort: salvage fallback
+    console.log('🚑 Attempting salvage fallback...');
+    for (const source of sources) {
+      const salvaged = salvageEmailsFromRaw(source);
+      if (salvaged.length > 0) {
+        console.log('✅ Salvage fallback succeeded:', salvaged.length, 'emails');
+        return salvaged;
+      }
+    }
+
     console.warn('❌ No emails could be extracted from any source');
     return [];
   };
@@ -231,6 +241,33 @@ export default function EmailOutput({ workflowResults, campaignData, onStartOver
       ));
     }
     return email;
+  };
+
+  // Salvage fallback for malformed JSON
+  const salvageEmailsFromRaw = (raw: string): Array<{subject: string, body: string, email_number: number}> => {
+    if (!raw || typeof raw !== 'string') return [];
+    
+    // lenient subject grab
+    const subjMatch = raw.match(/"subject"\s*:\s*"([^"]{1,2000})"/i);
+    let subject = subjMatch?.[1] ?? "";
+    
+    // lenient body grab: find "body": "<string ...>"
+    const bodyMatch = raw.match(/"body"\s*:\s*"([^"]{1,5000})"/i);
+    let body = bodyMatch?.[1] ?? "";
+    
+    // decode common escape sequences
+    body = body.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t').replace(/\\"/g, '"');
+    
+    if (subject || body) {
+      console.log('🚑 Salvage fallback extracted email:', { subject: subject.slice(0, 50), bodyLength: body.length });
+      return [{
+        subject: subject || 'Personalized Outreach',
+        body: body || raw.slice(0, 1000), // worst case: show first 1k chars
+        email_number: 1
+      }];
+    }
+    
+    return [];
   };
 
   // Get raw agent output for fallback display
