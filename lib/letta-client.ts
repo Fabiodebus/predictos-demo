@@ -86,33 +86,12 @@ export class LettaService {
         setTimeout(() => reject(new Error('Letta API timeout after 600 seconds')), 600000);
       });
       
-      let apiCall: any;
-      try {
-        // Try with boolean first (preferred for SDK)
-        apiCall = await this.client.agents.messages.create(this.agentId, {
-          messages: [{ role: 'user', content: prompt }],
-          enableThinking: true,    // Boolean first
-          maxSteps: 50
-        });
-      } catch (error: any) {
-        console.log('enableThinking boolean failed, trying string:', error?.message);
-        // Fallback to string if type mismatch
-        if (String(error?.message || '').includes('Expected string') || String(error?.message || '').includes('boolean')) {
-          try {
-            apiCall = await this.client.agents.messages.create(this.agentId, {
-              messages: [{ role: 'user', content: prompt }],
-              enableThinking: "true",  // String fallback
-              maxSteps: 50
-            });
-            console.log('enableThinking string fallback succeeded');
-          } catch (fallbackError) {
-            console.error('Both enableThinking attempts failed:', fallbackError);
-            throw fallbackError;
-          }
-        } else {
-          throw error;
-        }
-      }
+      // Use string format as required by Letta API
+      const apiCall = await this.client.agents.messages.create(this.agentId, {
+        messages: [{ role: 'user', content: prompt }],
+        enableThinking: "true" as any,  // String format required by API
+        maxSteps: 50
+      });
       
       // Race between API call and timeout
       const response = await Promise.race([apiCall, timeoutPromise]) as any;
