@@ -95,8 +95,10 @@ export interface WorkflowResults {
       requestSent: any;
       agentProcessed: boolean;
     };
+    final_assistant_text?: string;
     error?: string;
   };
+  final_assistant_text?: string;
 }
 
 export interface ApplicationState {
