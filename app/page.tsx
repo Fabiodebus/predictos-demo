@@ -170,6 +170,8 @@ export default function HomePage() {
       const reader = workflowResponse.body?.getReader();
       const decoder = new TextDecoder();
       let workflowData = null;
+      let finalEmails = null;
+      let rawAssistantText = null;
 
       if (!reader) {
         throw new Error('No response body reader available');
@@ -194,8 +196,22 @@ export default function HomePage() {
             
             try {
               const data = JSON.parse(dataStr);
+              
+              // Capture the canonical final_emails event
+              if (data.type === 'final_emails') {
+                finalEmails = data.emails;
+                rawAssistantText = data.rawAssistantText;
+                console.log('📧 Received final_emails:', finalEmails?.length || 0, 'emails');
+              }
+              
               if (data.type === 'workflow_complete') {
                 workflowData = data;
+                
+                // Inject final_emails if we have them
+                if (finalEmails && workflowData.results?.step5_email_generation) {
+                  workflowData.results.step5_email_generation.finalEmails = finalEmails;
+                  workflowData.results.step5_email_generation.rawAssistantText = rawAssistantText;
+                }
               }
             } catch (e) {
               console.warn('Failed to parse SSE data:', line, e);

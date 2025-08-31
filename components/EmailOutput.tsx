@@ -131,38 +131,61 @@ export default function EmailOutput({ workflowResults, campaignData, onStartOver
       return [];
     }
     
-    // 1) Prefer server-mapped emails, remap `content` -> `body`
-    let emails: Array<{subject: string, body: string, email_number: number}> = (workflowResults.step5_email_generation.assistantMessages || [])
-      .map((e: any, index: number) => ({ 
-        subject: e.subject || `Email ${index + 1}`, 
-        body: e.content || e.body || '', 
-        email_number: index + 1 
-      }))
-      .filter((e: any) => e.subject || e.body);
+    // 1) Prefer finalEmails from the canonical event
+    const stepData = workflowResults.step5_email_generation as any;
+    if (stepData.finalEmails?.length > 0) {
+      console.log('📧 Using finalEmails from canonical event:', stepData.finalEmails.length);
+      return stepData.finalEmails;
+    }
+    
+    // 2) Then try server-mapped emails, remap `content` -> `body`
+    const serverEmails: Array<{subject: string, body: string, email_number: number}> = 
+      (workflowResults.step5_email_generation.assistantMessages || [])
+        .map((e: any, index: number) => ({ 
+          subject: e.subject || `Email ${index + 1}`, 
+          body: e.content || e.body || '', 
+          email_number: index + 1 
+        }))
+        .filter((e: any) => e.body && e.body.trim());
 
-    // 2) Fallback: parse final assistant text locally
-    if (!emails.length) {
-      const raw = workflowResults.step5_email_generation.final_assistant_text || 
-                  workflowResults.final_assistant_text || 
-                  workflowResults.step5_email_generation.assistantMessages?.[0]?.content || '';
-      
-      console.log('🧩 Parsing raw content locally:', raw.slice(0, 200) + '...');
-      const obj = extractCampaignJson(raw);
+    if (serverEmails.length > 0) {
+      console.log('📧 Using server-mapped emails:', serverEmails.length);
+      return serverEmails;
+    }
+
+    // 3) Fallback: parse from all available raw sources
+    const rawAssistant = stepData.rawAssistantText || 
+                        stepData.final_assistant_text || 
+                        workflowResults.final_assistant_text || '';
+    
+    const rawTranscript = stepData.rawTranscript || '';
+    
+    // Try parsing from multiple sources
+    console.log('🧩 Attempting client-side parsing from raw content...');
+    const sources = [
+      rawTranscript,
+      rawAssistant,
+      workflowResults.step5_email_generation.assistantMessages?.[0]?.content || ''
+    ].filter(Boolean);
+    
+    for (const source of sources) {
+      const obj = extractCampaignJson(source);
       if (obj) {
         const mappedEmails = mapCampaignToEmails(obj);
-        emails = mappedEmails.map((email, index) => ({
-          subject: email.subject,
-          body: email.body,
-          email_number: index + 1
-        }));
-        console.log('✅ Local parsing succeeded:', emails.length, 'emails');
-      } else {
-        console.warn('❌ Local parsing failed');
+        if (mappedEmails.length > 0) {
+          const emails = mappedEmails.map((email, index) => ({
+            subject: email.subject,
+            body: email.body,
+            email_number: index + 1
+          }));
+          console.log('✅ Client-side parsing succeeded:', emails.length, 'emails from', source.slice(0, 50) + '...');
+          return emails;
+        }
       }
     }
 
-    console.log('📧 Final emails returned:', emails.length);
-    return emails;
+    console.warn('❌ No emails could be extracted from any source');
+    return [];
   };
 
   // Extract the final email from workflow results
@@ -178,6 +201,9 @@ export default function EmailOutput({ workflowResults, campaignData, onStartOver
   const finalEmail = getFinalEmail();
   const agentFailed = !workflowResults?.step5_email_generation?.success;
   const agentError = workflowResults?.step5_email_generation?.error;
+  const rawOutput = (workflowResults?.step5_email_generation as any)?.rawAssistantText ||
+                   workflowResults?.step5_email_generation?.final_assistant_text ||
+                   workflowResults?.final_assistant_text;
 
   const handleCopyEmail = async () => {
     if (await copyToClipboard(finalEmail)) {

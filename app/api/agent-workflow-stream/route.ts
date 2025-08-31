@@ -206,21 +206,37 @@ export async function POST(request: NextRequest) {
             }
           }
           
-          // Parse final JSON and map to structured emails
-          console.log('🔍 Final accumulated email content:', accumulatedEmail?.slice(0, 500) + '...');
-          console.log('🔍 Accumulated reasoning:', accumulatedReasoning?.slice(0, 200) + '...');
+          // Combine all sources for robust parsing
+          const fullTranscript = [accumulatedEmail, accumulatedReasoning].filter(Boolean).join("\n");
           
-          const parsed = extractCampaignJson(accumulatedEmail);
+          // Log for debugging
+          console.log('🔍 Final accumulated email:', {
+            first200: accumulatedEmail?.slice(0, 200),
+            last200: accumulatedEmail?.slice(-200),
+            length: accumulatedEmail?.length
+          });
+          console.log('🔍 Final accumulated reasoning:', {
+            first200: accumulatedReasoning?.slice(0, 200),
+            last200: accumulatedReasoning?.slice(-200),
+            length: accumulatedReasoning?.length
+          });
+          
+          // Try tolerant parsing on multiple sources
+          const parsed = 
+            extractCampaignJson(fullTranscript) ||
+            extractCampaignJson(accumulatedEmail) ||
+            extractCampaignJson(accumulatedReasoning);
+          
           const emails = parsed ? mapCampaignToEmails(parsed) : [];
-          console.log('🧩 parsed?', !!parsed, 'emails:', emails.length);
-          if (parsed) {
-            console.log('✅ Successfully parsed campaign JSON');
-          } else {
-            console.log('❌ Failed to parse campaign JSON from content');
-          }
+          
+          console.log('🧩 Parsing results:', {
+            parsed: !!parsed,
+            emailCount: emails.length,
+            willFallbackToRaw: emails.length === 0
+          });
           
           results.step5_email_generation = {
-            success: !!parsed,
+            success: emails.length > 0,
             messageCount,
             reasoning: [{ content: accumulatedReasoning }],
             assistantMessages: emails.map(e => ({ 
@@ -230,16 +246,26 @@ export async function POST(request: NextRequest) {
             })),
             toolCalls: [],
             campaignData,
-            final_assistant_text: accumulatedEmail?.slice(0, 20000) || ''
+            rawAssistantText: accumulatedEmail,      // For UI fallback
+            rawTranscript: fullTranscript,           // For UI fallback
+            final_assistant_text: accumulatedEmail   // Legacy support
           };
           
-          // Send raw buffer once for UI fallback
-          sendUpdate({ type: 'final_assistant_text', content: accumulatedEmail?.slice(0, 20000) || '' });
+          // NEW: Canonical event the UI can trust
+          sendUpdate({ 
+            type: 'final_emails', 
+            emails: emails.map((e, index) => ({ 
+              subject: e.subject, 
+              body: e.body,
+              email_number: index + 1
+            })),
+            rawAssistantText: accumulatedEmail 
+          });
           
           // Send final completion
           sendUpdate({ 
             type: 'workflow_complete',
-            success: !!results.step5_email_generation?.success,
+            success: emails.length > 0,
             results
           });
           
