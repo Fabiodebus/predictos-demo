@@ -1,6 +1,37 @@
 import { LettaClient } from '@letta-ai/letta-client';
 import { LettaResponse, LettaMessageType } from '@/types/campaign';
 
+// Letta SDK type definitions
+interface LettaStreamEvent {
+  id?: string;
+  message_type?: string;
+  messageType?: string;
+  reasoning?: string | unknown;
+  content?: string | unknown;
+  assistant_message?: string | unknown;
+  [key: string]: unknown;
+}
+
+interface LettaAPIResponse {
+  messages: Array<Record<string, unknown>>;
+  usage?: unknown;
+}
+
+interface CampaignFormData {
+  linkedinUrl?: string;
+  companyDomain?: string;
+  numberOfEmails?: number;
+  numberOfThreads?: number;
+  language?: string;
+  formality?: string;
+  leadName?: string;
+  leadTitle?: string;
+  companyName?: string;
+}
+
+// Extend LettaMessageType to include ping
+type ExtendedMessageType = LettaMessageType['messageType'] | 'ping';
+
 // Helper function to safely convert any value to string
 function textify(val: unknown): string {
   if (val == null) return "";
@@ -10,7 +41,7 @@ function textify(val: unknown): string {
     return val.map(textify).join("");
   }
   if (typeof val === "object") {
-    const o = val as any;
+    const o = val as Record<string, unknown>;
     if (typeof o.text === "string") return o.text;           // {text: "..."}
     if (typeof o.content === "string") return o.content;     // {content: "..."}
     if (Array.isArray(o.content)) return o.content.map(textify).join("");
@@ -20,18 +51,18 @@ function textify(val: unknown): string {
 }
 
 // Helper functions for streamed events
-function extractReasoning(evt: any): string {
+function extractReasoning(evt: LettaStreamEvent): string {
   // streamed reasoning lives in evt.reasoning
   return textify(evt.reasoning ?? evt.content);
 }
 
-function extractAssistantDelta(evt: any): string {
+function extractAssistantDelta(evt: LettaStreamEvent): string {
   // streamed assistant text commonly in evt.assistant_message; fall back to evt.content
   return textify(evt.assistant_message ?? evt.content);
 }
 
 // Enhanced utility function to normalize Letta messages with proper string handling
-function toLettaMessageType(m: any): LettaMessageType {
+function toLettaMessageType(m: Record<string, unknown>): LettaMessageType {
   const type = m.message_type ?? m.messageType ?? "assistant_message";
 
   const content =
@@ -89,12 +120,12 @@ export class LettaService {
       // Use string format as required by Letta API
       const apiCall = await this.client.agents.messages.create(this.agentId, {
         messages: [{ role: 'user', content: prompt }],
-        enableThinking: "true" as any,  // String format required by API
+        enableThinking: "true" as unknown,  // String format required by API
         maxSteps: 50
       });
       
       // Race between API call and timeout
-      const response = await Promise.race([apiCall, timeoutPromise]) as any;
+      const response = await Promise.race([apiCall, timeoutPromise]) as LettaAPIResponse;
 
       const mappedMessages: LettaMessageType[] = response.messages.map(toLettaMessageType);
 
@@ -119,7 +150,7 @@ export class LettaService {
   }
 
   async *streamEmailGeneration(prompt: string): AsyncGenerator<LettaMessageType> {
-    let stream: any;
+    let stream: AsyncIterable<LettaStreamEvent>;
     
     try {
       // Try with boolean first (preferred for SDK)
@@ -129,11 +160,12 @@ export class LettaService {
         streamTokens: true,      // Live typing  
         includePings: true,      // Prevent disconnects
         maxSteps: 50
-      } as any);
-    } catch (error: any) {
-      console.log('enableThinking boolean failed, trying string:', error?.message);
+      } as unknown) as AsyncIterable<LettaStreamEvent>;
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.log('enableThinking boolean failed, trying string:', errorMessage);
       // Fallback to string if type mismatch
-      if (String(error?.message || '').includes('Expected string') || String(error?.message || '').includes('boolean')) {
+      if (errorMessage.includes('Expected string') || errorMessage.includes('boolean')) {
         try {
           stream = await this.client.agents.messages.createStream(this.agentId, {
             messages: [{ role: 'user', content: prompt }],
@@ -141,7 +173,7 @@ export class LettaService {
             streamTokens: true,
             includePings: true,
             maxSteps: 50
-          } as any);
+          } as unknown) as AsyncIterable<LettaStreamEvent>;
           console.log('enableThinking string fallback succeeded');
         } catch (fallbackError) {
           console.error('Both enableThinking attempts failed:', fallbackError);
@@ -160,7 +192,7 @@ export class LettaService {
       let reasonBuf = "";
 
       for await (const evtRaw of stream) {
-        const evt: any = evtRaw;
+        const evt = evtRaw as LettaStreamEvent;
         const type = evt.message_type ?? evt.messageType ?? "";
         const id = evt.id ?? "";
 
@@ -177,12 +209,12 @@ export class LettaService {
             id: evt.id || crypto.randomUUID(),
             role: 'system',
             content: '',
-            messageType: 'ping' as any,  // Extend type for ping
+            messageType: 'ping' as ExtendedMessageType,  // Extend type for ping
             toolCall: undefined,
             toolReturn: undefined,  
             reasoning: undefined,
             timestamp: new Date().toISOString()
-          };
+          } as LettaMessageType;
           continue;
         }
 
@@ -236,8 +268,8 @@ export class LettaService {
   async resetAgentState(): Promise<void> {
     try {
       console.log('Resetting agent state for fresh conversation...');
-      // Use any type to handle SDK method variations
-      const client = this.client as any;
+      // Use typed interface to handle SDK method variations
+      const client = this.client as LettaClient & { agents: { messages: { reset?: (agentId: string, options: { addDefaultInitialMessages: boolean }) => Promise<void> } } };
       if (client.agents.messages.reset) {
         await client.agents.messages.reset(this.agentId, {
           addDefaultInitialMessages: false  // Start truly cold
@@ -262,7 +294,7 @@ export class LettaService {
     return this.agentId;
   }
 
-  buildPrompt(campaignData: any, researchResults: any[]): string {
+  buildPrompt(campaignData: CampaignFormData, researchResults: unknown[]): string {
     const { 
       linkedinUrl, 
       companyDomain, 

@@ -249,7 +249,7 @@ export default function EmailOutput({ workflowResults, campaignData, onStartOver
     
     // lenient subject grab
     const subjMatch = raw.match(/"subject"\s*:\s*"([^"]{1,2000})"/i);
-    let subject = subjMatch?.[1] ?? "";
+    const subject = subjMatch?.[1] ?? "";
     
     // lenient body grab: find "body": "<string ...>"
     const bodyMatch = raw.match(/"body"\s*:\s*"([^"]{1,5000})"/i);
