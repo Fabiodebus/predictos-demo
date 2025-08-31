@@ -84,7 +84,7 @@ export interface WorkflowResults {
     note?: string;
     error?: string;
   };
-  step5_agent_message: {
+  step5_email_generation: {
     success: boolean;
     messageCount?: number;
     reasoning?: any[];
