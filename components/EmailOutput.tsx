@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { WorkflowResults, CampaignFormData } from '@/types/campaign';
 import { copyToClipboard } from '@/lib/utils';
+import { extractCampaignJson, mapCampaignToEmails } from '@/lib/letta-client';
 
 interface EmailOutputProps {
   workflowResults?: WorkflowResults;
