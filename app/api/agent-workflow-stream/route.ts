@@ -175,8 +175,8 @@ export async function POST(request: NextRequest) {
           for await (const message of lettaService.streamEmailGeneration(prompt)) {
             messageCount++;
             
-            // Handle ping events for keep-alive
-            if (message.messageType === 'ping') {
+            // Handle ping events for keep-alive (cast to any to handle ping type)
+            if ((message as any).messageType === 'ping') {
               sendUpdate({ type: 'ping', t: Date.now() });
               continue;
             }
