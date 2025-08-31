@@ -23,8 +23,8 @@ export class MemoryService {
       const resolvedProject = (process.env.LETTA_PROJECT ?? 'copywriting-demo').trim();
       console.log('🔍 Memory Service - Using project:', JSON.stringify(resolvedProject));
       
-      // Use any type to handle SDK variations
-      const client = this.client as any;
+      // Use typed interface to handle SDK variations
+      const client = this.client as LettaClient & { agents: { blocks: { list: (agentId: string, options?: unknown) => Promise<MemoryBlock[]> & { withRawResponse?: () => Promise<{ data: MemoryBlock[], rawResponse: Response }> } } } };
       
       if (!client.agents.blocks?.list) {
         throw new Error('Blocks API not available in current SDK version');
@@ -33,7 +33,7 @@ export class MemoryService {
       // Try with explicit header override as backup
       const blocks = await client.agents.blocks.list(agentId, {
         headers: { 'X-Project': resolvedProject }
-      }).catch(async (error: any) => {
+      }).catch(async (error: unknown) => {
         console.log('🔄 Retrying with raw response for debugging...');
         
         // Try with withRawResponse for detailed error info
@@ -50,7 +50,7 @@ export class MemoryService {
       
       console.log(`Found ${blocks.length} memory blocks`);
       
-      return blocks.map((block: any) => ({
+      return blocks.map((block: MemoryBlock) => ({
         id: block.id,
         label: block.label || 'unlabeled',
         value: block.value || '',
@@ -71,7 +71,7 @@ export class MemoryService {
       const blocks = await this.listBlocks(agentId);
       const researchBlock = blocks.find(block => block.label === 'lead-company-research');
       
-      const client = this.client as any;
+      const client = this.client as LettaClient & { agents: { blocks: { modify: (agentId: string, label: string, options: { value: string, description?: string }) => Promise<MemoryBlock>, create: (agentId: string, options: { label: string, value: string, description?: string }) => Promise<MemoryBlock> } } };
       
       if (researchBlock) {
         // Modify existing block
@@ -141,7 +141,7 @@ export class MemoryService {
       const blocks = await this.listBlocks(agentId);
       const targetBlock = blocks.find(block => block.label === label);
       
-      const client = this.client as any;
+      const client = this.client as LettaClient & { agents: { blocks: { modify: (agentId: string, label: string, options: { value: string, description?: string }) => Promise<MemoryBlock>, create: (agentId: string, options: { label: string, value: string, description?: string }) => Promise<MemoryBlock> } } };
       
       if (targetBlock) {
         // Update existing block

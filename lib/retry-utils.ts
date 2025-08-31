@@ -3,14 +3,14 @@ export interface RetryOptions {
   backoffMs: number;
   maxBackoffMs?: number;
   exponential?: boolean;
-  onRetry?: (error: any, attempt: number) => void;
-  shouldRetry?: (error: any) => boolean;
+  onRetry?: (error: unknown, attempt: number) => void;
+  shouldRetry?: (error: unknown) => boolean;
 }
 
 export interface RetryResult<T> {
   success: boolean;
   result?: T;
-  error?: any;
+  error?: unknown;
   attempts: number;
   totalTime: number;
 }
@@ -41,7 +41,7 @@ export class RetryUtils {
     };
 
     const startTime = Date.now();
-    let lastError: any;
+    let lastError: unknown;
 
     for (let attempt = 1; attempt <= opts.attempts; attempt++) {
       try {
@@ -54,7 +54,7 @@ export class RetryUtils {
         }
         
         return result;
-      } catch (error: any) {
+      } catch (error: unknown) {
         lastError = error;
         
         console.error(`❌ Attempt ${attempt} failed:`, {

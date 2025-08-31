@@ -321,7 +321,7 @@ function* balancedObjects(src: string): Generator<{ start: number; end: number }
   }
 }
 
-export function extractCampaignJson(s: string): any | null {
+export function extractCampaignJson(s: string): CampaignData | null {
   if (!s) return null;
 
   // 1) try ```json fenced blocks
@@ -366,23 +366,84 @@ export function extractCampaignJson(s: string): any | null {
 
 export type Email = { subject: string; body: string; cta_type?: string };
 
-export function mapCampaignToEmails(obj: any): Email[] {
+// Define campaign data structure
+export interface CampaignData {
+  campaign?: {
+    thread_1?: Record<string, EmailData>;
+    emails?: EmailData[];
+  };
+  kampagne?: {
+    faden_1?: Record<string, EmailData>;
+  };
+  sequence?: {
+    thread_1?: Record<string, EmailData>;
+  };
+  emails?: EmailData[];
+  email_sequence?: EmailData[];
+  emails_de?: EmailData[];
+  sequenz?: EmailData[];
+  // Flat structure support
+  email_1?: EmailData;
+  email_2?: EmailData;
+  email_3?: EmailData;
+  mail_1?: EmailData;
+  mail_2?: EmailData;
+  mail_3?: EmailData;
+  // Very flat structure
+  subject_1?: string;
+  subject_2?: string;
+  subject_3?: string;
+  betreff_1?: string;
+  betreff_2?: string;
+  betreff_3?: string;
+  body_1?: string;
+  body_2?: string;
+  body_3?: string;
+  inhalt_1?: string;
+  inhalt_2?: string;
+  inhalt_3?: string;
+  text_1?: string;
+  text_2?: string;
+  text_3?: string;
+  cta_1?: string;
+  cta_2?: string;
+  cta_3?: string;
+}
+
+export interface EmailData {
+  subject?: string;
+  subject_line?: string;
+  titel?: string;
+  betreff?: string;
+  body?: string;
+  körper?: string;
+  inhalt?: string;
+  text?: string;
+  cta_type?: string;
+  cta?: string;
+  handlungsaufforderung?: string;
+}
+
+export function mapCampaignToEmails(obj: CampaignData | Record<string, unknown>): Email[] {
   if (!obj || typeof obj !== 'object') return [];
 
-  const t = (x: any) =>
-    typeof x === 'string' ? x : (x?.text ?? x?.content ?? '').toString();
+  const t = (x: unknown): string =>
+    typeof x === 'string' ? x : String((x as Record<string, unknown>)?.text ?? (x as Record<string, unknown>)?.content ?? '');
 
-  const asEmail = (node: any): Email | null => {
+  const asEmail = (node: EmailData | Record<string, unknown> | undefined): Email | null => {
     if (!node) return null;
-    const subject = t(node.subject ?? node.subject_line ?? node.titel ?? node.betreff);
-    const body    = t(node.body ?? node.körper ?? node.inhalt ?? node.text);
-    const cta     = node.cta_type ?? node.cta ?? node.handlungsaufforderung;
+    const emailData = node as EmailData;
+    const subject = t(emailData.subject ?? emailData.subject_line ?? emailData.titel ?? emailData.betreff ?? '');
+    const body    = t(emailData.body ?? emailData.körper ?? emailData.inhalt ?? emailData.text ?? '');
+    const cta     = emailData.cta_type ?? emailData.cta ?? emailData.handlungsaufforderung;
     if (!subject && !body) return null;
-    return { subject, body, cta_type: cta };
+    return { subject, body, cta_type: String(cta ?? '') };
   };
 
+  const campaign = obj as CampaignData;
+  
   // A) canonical nested thread
-  const t1 = obj?.campaign?.thread_1 ?? obj?.kampagne?.faden_1 ?? obj?.sequence?.thread_1;
+  const t1 = campaign?.campaign?.thread_1 ?? campaign?.kampagne?.faden_1 ?? campaign?.sequence?.thread_1;
   if (t1) {
     const order = ['email_1','email_2','email_3','mail_1','mail_2','mail_3'];
     const items = order.map(k => asEmail(t1[k])).filter(Boolean) as Email[];
@@ -391,12 +452,12 @@ export function mapCampaignToEmails(obj: any): Email[] {
 
   // B) arrays
   const arrays =
-    obj?.campaign?.thread_1?.emails ??
-    obj?.campaign?.emails ??
-    obj?.emails ??
-    obj?.email_sequence ??
-    obj?.emails_de ??
-    obj?.sequenz;
+    campaign?.campaign?.thread_1?.emails ??
+    campaign?.campaign?.emails ??
+    campaign?.emails ??
+    campaign?.email_sequence ??
+    campaign?.emails_de ??
+    campaign?.sequenz;
   if (Array.isArray(arrays)) {
     const items = arrays.map(asEmail).filter(Boolean) as Email[];
     if (items.length) return items.slice(0, 3);
@@ -404,16 +465,16 @@ export function mapCampaignToEmails(obj: any): Email[] {
 
   // C) flat keyed
   const flat = ['email_1','email_2','email_3','mail_1','mail_2','mail_3']
-    .map(k => asEmail(obj[k])).filter(Boolean) as Email[];
+    .map(k => asEmail(campaign[k])).filter(Boolean) as Email[];
   if (flat.length) return flat.slice(0, 3);
 
   // D) extremely flat (subject_1/body_1 …)
   const flat2: Email[] = [];
   for (let i = 1; i <= 3; i++) {
     const e = asEmail({
-      subject: obj[`subject_${i}`] ?? obj[`betreff_${i}`],
-      body:    obj[`body_${i}`]    ?? obj[`inhalt_${i}`] ?? obj[`text_${i}`],
-      cta:     obj[`cta_${i}`]
+      subject: campaign[`subject_${i}` as keyof CampaignData] ?? campaign[`betreff_${i}` as keyof CampaignData],
+      body:    campaign[`body_${i}` as keyof CampaignData]    ?? campaign[`inhalt_${i}` as keyof CampaignData] ?? campaign[`text_${i}` as keyof CampaignData],
+      cta:     campaign[`cta_${i}` as keyof CampaignData]
     });
     if (e) flat2.push(e);
   }
