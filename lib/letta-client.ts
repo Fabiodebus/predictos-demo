@@ -1,0 +1,457 @@
+import { LettaClient } from '@letta-ai/letta-client';
+import { LettaResponse, LettaMessageType } from '@/types/campaign';
+
+// Helper function to safely convert any value to string
+function textify(val: unknown): string {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  if (Array.isArray(val)) {
+    // Handle content arrays like [{type:"text", text:"..."}, ...]
+    return val.map(textify).join("");
+  }
+  if (typeof val === "object") {
+    const o = val as any;
+    if (typeof o.text === "string") return o.text;           // {text: "..."}
+    if (typeof o.content === "string") return o.content;     // {content: "..."}
+    if (Array.isArray(o.content)) return o.content.map(textify).join("");
+    try { return JSON.stringify(o); } catch { return String(o); }
+  }
+  return String(val);
+}
+
+// Helper functions for streamed events
+function extractReasoning(evt: any): string {
+  // streamed reasoning lives in evt.reasoning
+  return textify(evt.reasoning ?? evt.content);
+}
+
+function extractAssistantDelta(evt: any): string {
+  // streamed assistant text commonly in evt.assistant_message; fall back to evt.content
+  return textify(evt.assistant_message ?? evt.content);
+}
+
+// Enhanced utility function to normalize Letta messages with proper string handling
+function toLettaMessageType(m: any): LettaMessageType {
+  const type = m.message_type ?? m.messageType ?? "assistant_message";
+
+  const content =
+    type === "assistant_message" ? textify(m.assistant_message ?? m.content) :
+    type === "reasoning_message" ? textify(m.reasoning ?? m.content) :
+    textify(m.content);
+
+  return {
+    id: m.id ?? crypto.randomUUID(),
+    role: m.role ?? (type === "assistant_message" ? "assistant" : "system"),
+    content,
+    messageType: type,
+    toolCall: m.tool_calls ?? m.toolCall ?? null,
+    toolReturn: m.tool_return ?? m.toolReturn ?? null,
+    reasoning: textify(m.reasoning) || undefined,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+export class LettaService {
+  private client: LettaClient;
+  private agentId: string;
+
+  constructor() {
+    if (!process.env.LETTA_API_KEY) {
+      throw new Error('LETTA_API_KEY is required');
+    }
+    if (!process.env.LETTA_AGENT_ID) {
+      throw new Error('LETTA_AGENT_ID is required');
+    }
+
+    // Debug project slug
+    const resolvedProject = (process.env.LETTA_PROJECT ?? 'copywriting-demo').trim();
+    console.log('🔍 Debug - Using X-Project:', JSON.stringify(resolvedProject));
+    console.log('🔍 Debug - Agent ID:', process.env.LETTA_AGENT_ID);
+    console.log('🔍 Debug - API Key prefix:', process.env.LETTA_API_KEY?.substring(0, 20) + '...');
+
+    this.client = new LettaClient({
+      token: process.env.LETTA_API_KEY,
+      project: resolvedProject,
+    });
+    this.agentId = process.env.LETTA_AGENT_ID;
+  }
+
+  async generateEmail(prompt: string): Promise<LettaResponse> {
+    try {
+      console.log('Attempting to create message with agent ID:', this.agentId);
+      console.log('API key starts with:', process.env.LETTA_API_KEY?.substring(0, 10) + '...');
+      
+      // Create a timeout wrapper for the API call (10 minutes - Letta service can be very slow)
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Letta API timeout after 600 seconds')), 600000);
+      });
+      
+      let apiCall: any;
+      try {
+        // Try with boolean first (preferred for SDK)
+        apiCall = await this.client.agents.messages.create(this.agentId, {
+          messages: [{ role: 'user', content: prompt }],
+          enableThinking: true,    // Boolean first
+          maxSteps: 50
+        });
+      } catch (error: any) {
+        console.log('enableThinking boolean failed, trying string:', error?.message);
+        // Fallback to string if type mismatch
+        if (String(error?.message || '').includes('Expected string') || String(error?.message || '').includes('boolean')) {
+          try {
+            apiCall = await this.client.agents.messages.create(this.agentId, {
+              messages: [{ role: 'user', content: prompt }],
+              enableThinking: "true",  // String fallback
+              maxSteps: 50
+            });
+            console.log('enableThinking string fallback succeeded');
+          } catch (fallbackError) {
+            console.error('Both enableThinking attempts failed:', fallbackError);
+            throw fallbackError;
+          }
+        } else {
+          throw error;
+        }
+      }
+      
+      // Race between API call and timeout
+      const response = await Promise.race([apiCall, timeoutPromise]) as any;
+
+      const mappedMessages: LettaMessageType[] = response.messages.map(toLettaMessageType);
+
+      return {
+        messages: mappedMessages,
+        usage: response.usage,
+      };
+    } catch (error) {
+      console.error('Letta API error:', error);
+      
+      // Log request body for 400s for debugging
+      if (error && typeof error === 'object' && 'status' in error && error.status === 400) {
+        console.error('400 error - Request details:', {
+          agentId: this.agentId,
+          project: process.env.LETTA_PROJECT,
+          promptLength: prompt.length
+        });
+      }
+      
+      throw new Error(`Failed to generate email: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async *streamEmailGeneration(prompt: string): AsyncGenerator<LettaMessageType> {
+    let stream: any;
+    
+    try {
+      // Try with boolean first (preferred for SDK)
+      stream = await this.client.agents.messages.createStream(this.agentId, {
+        messages: [{ role: 'user', content: prompt }],
+        enableThinking: true,    // Boolean first
+        streamTokens: true,      // Live typing  
+        includePings: true,      // Prevent disconnects
+        maxSteps: 50
+      } as any);
+    } catch (error: any) {
+      console.log('enableThinking boolean failed, trying string:', error?.message);
+      // Fallback to string if type mismatch
+      if (String(error?.message || '').includes('Expected string') || String(error?.message || '').includes('boolean')) {
+        try {
+          stream = await this.client.agents.messages.createStream(this.agentId, {
+            messages: [{ role: 'user', content: prompt }],
+            enableThinking: "true",  // String fallback
+            streamTokens: true,
+            includePings: true,
+            maxSteps: 50
+          } as any);
+          console.log('enableThinking string fallback succeeded');
+        } catch (fallbackError) {
+          console.error('Both enableThinking attempts failed:', fallbackError);
+          throw fallbackError;
+        }
+      } else {
+        throw error;
+      }
+    }
+    
+    try {
+
+      let curType = "";
+      let curId = "";
+      let ansBuf = "";
+      let reasonBuf = "";
+
+      for await (const evtRaw of stream) {
+        const evt: any = evtRaw;
+        const type = evt.message_type ?? evt.messageType ?? "";
+        const id = evt.id ?? "";
+
+        // new message boundary? flush if needed
+        const boundary = type !== curType || id !== curId;
+        if (boundary) {
+          curType = type; 
+          curId = id;
+        }
+
+        // Handle ping events for keep-alive
+        if (type === "ping") {
+          yield {
+            id: evt.id || crypto.randomUUID(),
+            role: 'system',
+            content: '',
+            messageType: 'ping' as any,  // Extend type for ping
+            toolCall: undefined,
+            toolReturn: undefined,  
+            reasoning: undefined,
+            timestamp: new Date().toISOString()
+          };
+          continue;
+        }
+
+        if (type === "reasoning_message") {
+          const delta = extractReasoning(evt);
+          console.log('📝 Reasoning message:', { type, delta: delta?.slice(0, 100) + '...', total: reasonBuf.length });
+          if (delta) {
+            reasonBuf += delta;
+            yield toLettaMessageType({ ...evt, message_type: type, reasoning: reasonBuf });
+          }
+        } else if (type === "assistant_message") {
+          const delta = extractAssistantDelta(evt);
+          console.log('🤖 Assistant message:', { type, delta: delta?.slice(0, 100) + '...', total: ansBuf.length });
+          if (delta) {
+            ansBuf += delta;
+            yield toLettaMessageType({ ...evt, message_type: type, assistant_message: ansBuf });
+          }
+        } else {
+          console.log('🔧 Other message type:', { type, evt: JSON.stringify(evt).slice(0, 200) + '...' });
+          // tool_call_message/tool_return_message/etc — pass through if you display them
+          yield toLettaMessageType(evt);
+        }
+      }
+    } catch (error) {
+      console.error('Letta streaming error:', error);
+      
+      // Log request body for 400s for debugging
+      if (error && typeof error === 'object' && 'status' in error && error.status === 400) {
+        console.error('400 streaming error - Request details:', {
+          agentId: this.agentId,
+          project: process.env.LETTA_PROJECT,
+          promptLength: prompt.length
+        });
+      }
+      
+      throw new Error(`Failed to stream email generation: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  // Reset agent state before new conversations
+  async resetAgentState(): Promise<void> {
+    try {
+      console.log('Resetting agent state for fresh conversation...');
+      // Use any type to handle SDK method variations
+      const client = this.client as any;
+      if (client.agents.messages.reset) {
+        await client.agents.messages.reset(this.agentId, {
+          addDefaultInitialMessages: false  // Start truly cold
+        });
+      } else {
+        console.warn('Reset method not available in current SDK version');
+      }
+      console.log('Agent state reset successfully');
+    } catch (error) {
+      console.error('Failed to reset agent state:', error);
+      throw new Error(`Failed to reset agent state: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  // Get client instance for external operations
+  getClient(): LettaClient {
+    return this.client;
+  }
+
+  // Get agent ID
+  getAgentId(): string {
+    return this.agentId;
+  }
+
+  buildPrompt(campaignData: any, researchResults: any[]): string {
+    const { 
+      linkedinUrl, 
+      companyDomain, 
+      numberOfEmails, 
+      numberOfThreads, 
+      language, 
+      formality,
+      leadName,
+      leadTitle,
+      companyName
+    } = campaignData;
+    
+    // Build structured JSON payload for the agent with actual user data
+    const leadInfo = {
+      lead_name: leadName?.split(' ')[0] || '',
+      lead_surname: leadName?.split(' ').slice(1).join(' ') || '',
+      lead_default_position_title: leadTitle || '',
+      employer: companyName || '',
+      lead_current_title: leadTitle || '',
+      lead_company_domain: companyDomain || '',
+      lead_company_name: companyName || '',
+      linkedin_url: linkedinUrl || ''
+    };
+
+    const campaignInfo = {
+      number_threads: String(numberOfThreads || 1),
+      number_emails: String(numberOfEmails || 1),
+      language: language || 'german',
+      formality: formality || 'Sie'
+    };
+
+    // Create the structured message the agent expects
+    const message = {
+      campaign_information: campaignInfo,
+      lead_information: leadInfo
+    };
+
+    return JSON.stringify(message, null, 2);
+  }
+}
+
+// Robust JSON extractor (string-aware, balanced braces, handles markdown and malformed JSON)
+export function extractCampaignJson(s: string): any | null {
+  if (!s) return null;
+
+  const candidates: string[] = [];
+
+  // 1) Prefer fenced JSON blocks
+  const fenceRe = /```(?:json)?\s*([\s\S]*?)```/gi;
+  let m: RegExpExecArray | null;
+  while ((m = fenceRe.exec(s))) candidates.push(m[1]);
+
+  // 2) If no fenced blocks, scan for likely schema hints, then balance braces forward
+  const startHints = [
+    '"campaign"', '"email_sequence"', '"emails"', '"thread_1"',
+    '{\n  "campaign"', '{\n  "email_sequence"',
+    '"kampagne"', '"faden_1"', '"sequenz"', '"emails_de"'
+  ];
+
+  function balancedFrom(idx: number): string | null {
+    let depth = 0, inStr = false, esc = false, end = -1;
+    for (let i = idx; i < s.length; i++) {
+      const ch = s[i];
+      if (inStr) { esc = ch === '\\' ? !esc : false; if (!esc && ch === '"') inStr = false; continue; }
+      if (ch === '"') { inStr = true; continue; }
+      if (ch === '{') depth++;
+      else if (ch === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
+    }
+    return end > idx ? s.slice(idx, end) : null;
+  }
+
+  for (const hint of startHints) {
+    const j = s.indexOf(hint);
+    if (j !== -1) {
+      const open = s.lastIndexOf('{', j);
+      if (open !== -1) {
+        const blob = balancedFrom(open);
+        if (blob) candidates.push(blob);
+      }
+    }
+  }
+
+  // 3) Last resort: take the last balanced object in the string
+  if (!candidates.length) {
+    const firstOpen = s.indexOf('{');
+    if (firstOpen !== -1) {
+      let depth = 0, inStr = false, esc = false, lastStart = -1, lastEnd = -1;
+      for (let i = firstOpen; i < s.length; i++) {
+        const ch = s[i];
+        if (inStr) { esc = ch === '\\' ? !esc : false; if (!esc && ch === '"') inStr = false; continue; }
+        if (ch === '"') { inStr = true; continue; }
+        if (ch === '{') { if (depth === 0) lastStart = i; depth++; }
+        else if (ch === '}') { depth--; if (depth === 0) lastEnd = i + 1; }
+      }
+      if (lastStart !== -1 && lastEnd !== -1) candidates.push(s.slice(lastStart, lastEnd));
+    }
+  }
+
+  // 4) Try parsing candidates with light sanitization
+  const tryParse = (raw: string) => {
+    const trims = raw.trim();
+    try { return JSON.parse(trims); } catch {}
+    // remove trailing commas
+    try { return JSON.parse(trims.replace(/,\s*([}\]])/g, '$1')); } catch {}
+    // quote unquoted keys + switch single → double quotes where safe
+    try {
+      const q = trims
+        .replace(/(['"])?([a-zA-Z0-9_]+)\1\s*:/g, '"$2":')               // unquoted->quoted keys
+        .replace(/'([^'\\]*(\\.[^'\\]*)*)'/g, '"$1"');                    // single->double
+      return JSON.parse(q);
+    } catch {}
+    return null;
+  };
+
+  for (const c of candidates) {
+    const parsed = tryParse(c);
+    if (parsed && typeof parsed === 'object') return parsed;
+  }
+  return null;
+}
+
+export type Email = { subject: string; body: string; cta_type?: string };
+
+export function mapCampaignToEmails(obj: any): Email[] {
+  if (!obj || typeof obj !== 'object') return [];
+
+  const t = (x: any) =>
+    typeof x === 'string' ? x : (x?.text ?? x?.content ?? '').toString();
+
+  const asEmail = (node: any): Email | null => {
+    if (!node) return null;
+    const subject = t(node.subject ?? node.subject_line ?? node.titel ?? node.betreff);
+    const body    = t(node.body ?? node.körper ?? node.inhalt ?? node.text);
+    const cta     = node.cta_type ?? node.cta ?? node.handlungsaufforderung;
+    if (!subject && !body) return null;
+    return { subject, body, cta_type: cta };
+  };
+
+  // A) canonical nested thread
+  const t1 = obj?.campaign?.thread_1 ?? obj?.kampagne?.faden_1 ?? obj?.sequence?.thread_1;
+  if (t1) {
+    const order = ['email_1','email_2','email_3','mail_1','mail_2','mail_3'];
+    const items = order.map(k => asEmail(t1[k])).filter(Boolean) as Email[];
+    if (items.length) return items.slice(0, 3);
+  }
+
+  // B) arrays
+  const arrays =
+    obj?.campaign?.thread_1?.emails ??
+    obj?.campaign?.emails ??
+    obj?.emails ??
+    obj?.email_sequence ??
+    obj?.emails_de ??
+    obj?.sequenz;
+  if (Array.isArray(arrays)) {
+    const items = arrays.map(asEmail).filter(Boolean) as Email[];
+    if (items.length) return items.slice(0, 3);
+  }
+
+  // C) flat keyed
+  const flat = ['email_1','email_2','email_3','mail_1','mail_2','mail_3']
+    .map(k => asEmail(obj[k])).filter(Boolean) as Email[];
+  if (flat.length) return flat.slice(0, 3);
+
+  // D) extremely flat (subject_1/body_1 …)
+  const flat2: Email[] = [];
+  for (let i = 1; i <= 3; i++) {
+    const e = asEmail({
+      subject: obj[`subject_${i}`] ?? obj[`betreff_${i}`],
+      body:    obj[`body_${i}`]    ?? obj[`inhalt_${i}`] ?? obj[`text_${i}`],
+      cta:     obj[`cta_${i}`]
+    });
+    if (e) flat2.push(e);
+  }
+  if (flat2.length) return flat2;
+
+  return [];
+}
+
+// Export textify for use in other modules
+export { textify };
