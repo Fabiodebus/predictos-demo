@@ -16,6 +16,7 @@ interface EmailOutputProps {
 export default function EmailOutput({ workflowResults, campaignData, onStartOver }: EmailOutputProps) {
   const [copied, setCopied] = useState(false);
   const [isPreview, setIsPreview] = useState(false);
+  const [expandedEmails, setExpandedEmails] = useState<Set<number>>(new Set());
 
   // Helper functions for email parsing
   const extractSubject = (email: string): string => {
@@ -330,7 +331,6 @@ export default function EmailOutput({ workflowResults, campaignData, onStartOver
     );
   }
 
-  const [expandedEmails, setExpandedEmails] = useState<Set<number>>(new Set());
   const emails = getAllEmails();
 
   const toggleEmail = (emailNumber: number) => {

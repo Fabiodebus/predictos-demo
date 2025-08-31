@@ -20,7 +20,6 @@ export async function POST(request: NextRequest) {
           searchQuery,
           companyDomain,
           linkedinUrl,
-          leadInfo,
           numberOfEmails = 1,
           numberOfThreads = 1,
           language = 'german',
@@ -47,7 +46,7 @@ export async function POST(request: NextRequest) {
         // Step 1: Research (check cache first)
         sendUpdate({ type: 'status', step: 1, message: 'Checking research cache...' });
         
-        let results: any = {
+        const results: any = {
           step1_research: null,
           step2_agent_discovery: null,
           step3_memory_management: null,
@@ -162,8 +161,8 @@ export async function POST(request: NextRequest) {
         console.log("🧾 numberOfEmails:", campaignData.numberOfEmails);
         console.log("🧍", campaignData.leadName, campaignData.leadTitle, campaignData.companyName);
         
-        let reasoningMessages: any[] = [];
-        let assistantMessages: any[] = [];
+        const reasoningMessages: any[] = [];
+        const assistantMessages: any[] = [];
         let messageCount = 0;
         let accumulatedReasoning = '';
         let accumulatedEmail = '';
