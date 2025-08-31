@@ -54,7 +54,7 @@ export class RetryUtils {
         }
         
         return result;
-      } catch (error) {
+      } catch (error: any) {
         lastError = error;
         
         console.error(`❌ Attempt ${attempt} failed:`, {
