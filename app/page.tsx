@@ -172,7 +172,7 @@ export default function HomePage() {
       let workflowData = null;
       let finalEmails = null;
       let rawAssistantText = null;
-      let partialResults: any = {};
+      const partialResults: any = {};
       let hasResearchCompleted = false;
 
       if (!reader) {
