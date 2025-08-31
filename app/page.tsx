@@ -177,6 +177,7 @@ export default function HomePage() {
       let rawAssistantText = null;
       const partialResults: any = {};
       let hasResearchCompleted = false;
+      let sseBuffer = ''; // Buffer for handling incomplete JSON chunks
 
       if (!reader) {
         throw new Error('No response body reader available');
@@ -194,14 +195,24 @@ export default function HomePage() {
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
-            const dataStr = line.slice(6);
+            const dataStr = line.slice(6).trim();
+            
+            // Check [DONE] FIRST, before any parsing
             if (dataStr === '[DONE]') {
-              break;
+              console.log('Stream complete');
+              continue; // Skip to next line, don't try to parse
             }
             
+            // Skip empty data
+            if (!dataStr) continue;
+            
+            // Accumulate data in buffer for handling large JSON
+            sseBuffer += dataStr;
+            
             try {
-              const data = JSON.parse(dataStr);
+              const data = JSON.parse(sseBuffer);
               console.log('📡 SSE Event:', data.type, data.step || '', data.message || '');
+              sseBuffer = ''; // Clear buffer on successful parse
               
               // Track research completion
               if (data.type === 'research_complete') {
@@ -268,9 +279,16 @@ export default function HomePage() {
                   workflowData.results.step1_research = partialResults.step1_research;
                 }
               }
-            } catch (e) {
-              console.warn('Failed to parse SSE data:', line, e);
-              // Don't break the stream for parse errors - continue processing
+            } catch (e: any) {
+              // If JSON is incomplete, keep buffering
+              if (e.message?.includes('Unexpected end of JSON') || e.message?.includes('Unterminated string')) {
+                console.log('📦 Buffering incomplete JSON, length:', sseBuffer.length);
+                continue; // Wait for more data
+              } else {
+                // Real parse error - log and reset
+                console.warn('Failed to parse SSE data:', e.message, 'Data:', sseBuffer.slice(0, 100) + '...');
+                sseBuffer = ''; // Reset buffer
+              }
             }
           }
         }
