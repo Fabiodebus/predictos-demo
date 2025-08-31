@@ -63,7 +63,7 @@ function extractAssistantDelta(evt: LettaStreamEvent): string {
 
 // Enhanced utility function to normalize Letta messages with proper string handling
 function toLettaMessageType(m: Record<string, unknown>): LettaMessageType {
-  const type = m.message_type ?? m.messageType ?? "assistant_message";
+  const type = String(m.message_type ?? m.messageType ?? "assistant_message");
 
   const content =
     type === "assistant_message" ? textify(m.assistant_message ?? m.content) :
@@ -71,12 +71,12 @@ function toLettaMessageType(m: Record<string, unknown>): LettaMessageType {
     textify(m.content);
 
   return {
-    id: m.id ?? crypto.randomUUID(),
-    role: m.role ?? (type === "assistant_message" ? "assistant" : "system"),
+    id: String(m.id ?? crypto.randomUUID()),
+    role: String(m.role ?? (type === "assistant_message" ? "assistant" : "system")) as 'user' | 'assistant' | 'system',
     content,
-    messageType: type,
-    toolCall: m.tool_calls ?? m.toolCall ?? null,
-    toolReturn: m.tool_return ?? m.toolReturn ?? null,
+    messageType: type as LettaMessageType['messageType'],
+    toolCall: (m.tool_calls ?? m.toolCall) as LettaMessageType['toolCall'],
+    toolReturn: (m.tool_return ?? m.toolReturn) as LettaMessageType['toolReturn'],
     reasoning: textify(m.reasoning) || undefined,
     timestamp: new Date().toISOString(),
   };
@@ -120,7 +120,7 @@ export class LettaService {
       // Use string format as required by Letta API
       const apiCall = await this.client.agents.messages.create(this.agentId, {
         messages: [{ role: 'user', content: prompt }],
-        enableThinking: "true" as unknown,  // String format required by API
+        enableThinking: "true",  // String format required by API
         maxSteps: 50
       });
       
@@ -131,7 +131,7 @@ export class LettaService {
 
       return {
         messages: mappedMessages,
-        usage: response.usage,
+        usage: response.usage as LettaResponse['usage'],
       };
     } catch (error) {
       console.error('Letta API error:', error);
@@ -160,7 +160,7 @@ export class LettaService {
         streamTokens: true,      // Live typing  
         includePings: true,      // Prevent disconnects
         maxSteps: 50
-      } as unknown) as AsyncIterable<LettaStreamEvent>;
+      } as any) as AsyncIterable<LettaStreamEvent>;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.log('enableThinking boolean failed, trying string:', errorMessage);
@@ -173,7 +173,7 @@ export class LettaService {
             streamTokens: true,
             includePings: true,
             maxSteps: 50
-          } as unknown) as AsyncIterable<LettaStreamEvent>;
+          } as any) as AsyncIterable<LettaStreamEvent>;
           console.log('enableThinking string fallback succeeded');
         } catch (fallbackError) {
           console.error('Both enableThinking attempts failed:', fallbackError);
@@ -440,6 +440,8 @@ export interface CampaignData {
   cta_1?: string;
   cta_2?: string;
   cta_3?: string;
+  // Index signature for dynamic access
+  [key: string]: unknown;
 }
 
 export interface EmailData {
@@ -497,7 +499,7 @@ export function mapCampaignToEmails(obj: CampaignData | Record<string, unknown>)
 
   // C) flat keyed
   const flat = ['email_1','email_2','email_3','mail_1','mail_2','mail_3']
-    .map(k => asEmail(campaign[k])).filter(Boolean) as Email[];
+    .map(k => asEmail(campaign[k] as EmailData)).filter(Boolean) as Email[];
   if (flat.length) return flat.slice(0, 3);
 
   // D) extremely flat (subject_1/body_1 …)

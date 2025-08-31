@@ -28,11 +28,13 @@ export class RetryUtils {
       exponential: true,
       shouldRetry: (error) => {
         // Don't retry on authentication errors (401, 403)
-        if (error?.status === 401 || error?.status === 403) {
+        const errorObj = error as Record<string, unknown>;
+        const status = Number(errorObj?.status || 0);
+        if (status === 401 || status === 403) {
           return false;
         }
         // Don't retry on client errors (400-499) except rate limits (429)
-        if (error?.status >= 400 && error?.status < 500 && error?.status !== 429) {
+        if (status >= 400 && status < 500 && status !== 429) {
           return false;
         }
         return true;
@@ -57,26 +59,27 @@ export class RetryUtils {
       } catch (error: unknown) {
         lastError = error;
         
+        const errorObj = error as Record<string, unknown>;
         console.error(`❌ Attempt ${attempt} failed:`, {
           error: error instanceof Error ? error.message : String(error),
-          status: error?.status || 'unknown',
+          status: errorObj?.status || 'unknown',
           attempt,
           totalAttempts: opts.attempts
         });
 
         // Log request details for debugging 400s
-        if (error?.status === 400) {
+        if (Number(errorObj?.status || 0) === 400) {
           console.error('🔍 400 Error Debug Info:', {
-            requestBody: error?.requestBody || 'not available',
-            url: error?.url || 'not available',
-            headers: error?.headers || 'not available'
+            requestBody: errorObj?.requestBody || 'not available',
+            url: errorObj?.url || 'not available',
+            headers: errorObj?.headers || 'not available'
           });
         }
 
         // Check if we should retry
         if (attempt === opts.attempts || (opts.shouldRetry && !opts.shouldRetry(error))) {
           if (!opts.shouldRetry?.(error)) {
-            console.error(`🚫 Not retrying due to error type: ${error?.status || 'unknown'}`);
+            console.error(`🚫 Not retrying due to error type: ${errorObj?.status || 'unknown'}`);
           }
           break;
         }
@@ -115,16 +118,18 @@ export class RetryUtils {
       },
       shouldRetry: (error) => {
         // Letta-specific retry logic
-        if (error?.status === 401 || error?.status === 403) {
+        const errorObj = error as Record<string, unknown>;
+        const status = Number(errorObj?.status || 0);
+        if (status === 401 || status === 403) {
           console.log('🔐 Authentication error - not retrying');
           return false;
         }
-        if (error?.status === 404) {
+        if (status === 404) {
           console.log('🔍 Resource not found - not retrying');
           return false;
         }
-        if (error?.status >= 400 && error?.status < 500 && error?.status !== 429) {
-          console.log(`🚫 Client error (${error.status}) - not retrying`);
+        if (status >= 400 && status < 500 && status !== 429) {
+          console.log(`🚫 Client error (${status}) - not retrying`);
           return false;
         }
         return true;
@@ -146,7 +151,9 @@ export class RetryUtils {
       },
       shouldRetry: (error) => {
         // Don't retry on auth errors or client errors
-        if (error?.status >= 400 && error?.status < 500 && error?.status !== 429) {
+        const errorObj = error as Record<string, unknown>;
+        const status = Number(errorObj?.status || 0);
+        if (status >= 400 && status < 500 && status !== 429) {
           return false;
         }
         return true;

@@ -50,8 +50,8 @@ export class MemoryService {
       
       console.log(`Found ${blocks.length} memory blocks`);
       
-      return blocks.map((block: MemoryBlock) => ({
-        id: block.id,
+      return blocks.map((block: any) => ({
+        id: block.id || crypto.randomUUID(),
         label: block.label || 'unlabeled',
         value: block.value || '',
         description: block.description || ''
@@ -105,7 +105,7 @@ export class MemoryService {
         console.log('Created new block with ID:', newBlock.id);
         
         // Step 2: Attach to agent
-        await client.agents.blocks.attach(agentId, newBlock.id);
+        await client.agents.blocks.attach(agentId, newBlock.id || crypto.randomUUID());
         console.log('Attached block to agent');
         
         // Step 3: Optional - modify if needed (already has content from creation)
@@ -167,7 +167,7 @@ export class MemoryService {
           description: description || `${label} memory block`
         });
         
-        await client.agents.blocks.attach(agentId, newBlock.id);
+        await client.agents.blocks.attach(agentId, newBlock.id || crypto.randomUUID());
         console.log(`Memory block ${label} created and attached successfully`);
       }
     } catch (error) {
