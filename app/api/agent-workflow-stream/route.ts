@@ -167,6 +167,11 @@ export async function POST(request: NextRequest) {
         let completed = false;
 
         const finish = (emails: any[] = [], rawAssistantText = '') => {
+          console.log(`🏁 Finishing with ${emails.length} emails, rawText=${rawAssistantText.length}chars`);
+          
+          // Check if we can parse the campaign
+          const canParseCampaign = !!extractCampaignJson(rawAssistantText);
+          
           results.step5_email_generation = {
             ...(results.step5_email_generation ?? {}),
             success: emails.length > 0,
@@ -176,12 +181,19 @@ export async function POST(request: NextRequest) {
             toolCalls: [],
             campaignData,
             rawAssistantText,
+            final_assistant_text: rawAssistantText, // ensure this is available for salvage
+            parsed_campaign_ok: canParseCampaign,
+            email_count: emails.length
           };
+          
+          console.log(`📧 Sending final_emails event with ${emails.length} emails`);
           sendUpdate({ type: 'final_emails', emails: emails.map((e, index) => ({ 
             subject: e.subject, 
             body: e.body,
             email_number: index + 1
           })), rawAssistantText });
+          
+          console.log(`✅ Sending workflow_complete, success=${emails.length > 0}`);
           sendUpdate({ type: 'workflow_complete', success: emails.length > 0, results });
           controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
           completed = true;
@@ -214,11 +226,16 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          // parse server-side
-          const full = [accumulatedEmail, accumulatedReasoning].filter(Boolean).join('\n');
+          // parse server-side - try each source independently (don't join!)
+          console.log(`📊 Final extraction: email=${accumulatedEmail.length}chars, reasoning=${accumulatedReasoning.length}chars`);
+          
           const parsed =
-            extractCampaignJson(full) || extractCampaignJson(accumulatedEmail) || extractCampaignJson(accumulatedReasoning);
+            extractCampaignJson(accumulatedEmail) || 
+            extractCampaignJson(accumulatedReasoning) ||
+            extractCampaignJson([accumulatedEmail, accumulatedReasoning].filter(Boolean).join('\n')); // fallback join only if needed
+          
           const emails = parsed ? mapCampaignToEmails(parsed) : [];
+          console.log(`🧩 Extracted ${emails.length} emails from campaign JSON`);
           finish(emails, accumulatedEmail);
 
         } catch (err: any) {
