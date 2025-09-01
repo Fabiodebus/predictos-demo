@@ -229,13 +229,29 @@ export async function POST(request: NextRequest) {
           // parse server-side - try each source independently (don't join!)
           console.log(`📊 Final extraction: email=${accumulatedEmail.length}chars, reasoning=${accumulatedReasoning.length}chars`);
           
+          // Log first 500 chars of accumulated email to see what we're parsing
+          console.log('📝 Email content preview:', accumulatedEmail.slice(0, 500));
+          
           const parsed =
             extractCampaignJson(accumulatedEmail) || 
             extractCampaignJson(accumulatedReasoning) ||
             extractCampaignJson([accumulatedEmail, accumulatedReasoning].filter(Boolean).join('\n')); // fallback join only if needed
           
+          if (parsed) {
+            console.log('✅ Successfully parsed campaign JSON:', Object.keys(parsed));
+          } else {
+            console.log('❌ Failed to parse campaign JSON from any source');
+          }
+          
           const emails = parsed ? mapCampaignToEmails(parsed) : [];
           console.log(`🧩 Extracted ${emails.length} emails from campaign JSON`);
+          
+          // If no emails but we have content, log why
+          if (emails.length === 0 && accumulatedEmail.length > 0) {
+            console.log('⚠️ Have content but no emails extracted. Content includes campaign_emails?', 
+                       accumulatedEmail.includes('campaign_emails'));
+          }
+          
           finish(emails, accumulatedEmail);
 
         } catch (err: any) {

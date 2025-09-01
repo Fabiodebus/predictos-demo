@@ -363,7 +363,7 @@ export function extractCampaignJson(s: string): CampaignData | null {
     str.includes('"emails"') ||
     str.includes('"email_sequence"');
 
-  // 1) try ```json fenced blocks
+  // 1) try ```json fenced blocks FIRST (most reliable)
   const blocks = Array.from(s.matchAll(/```json\s*([\s\S]*?)```/gi)).map(m => m[1].trim());
   for (const b of blocks) {
     try { 
@@ -373,7 +373,9 @@ export function extractCampaignJson(s: string): CampaignData | null {
         console.log('✅ Extracted from JSON fence block');
         return o;
       }
-    } catch {}
+    } catch (e) {
+      console.log('Failed to parse fenced JSON block:', e);
+    }
   }
 
   // 2) scan whole string for balanced objects and pick the first that parses & contains campaign-like structure
