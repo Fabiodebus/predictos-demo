@@ -187,10 +187,15 @@ export default function EmailOutput({ workflowResults, campaignData, onStartOver
     // 4) Last resort: salvage fallback
     console.log('🚑 Attempting salvage fallback...');
     for (const source of sources) {
-      const salvaged = salvageEmailsFromRaw(source);
-      if (salvaged.length > 0) {
-        console.log('✅ Salvage fallback succeeded:', salvaged.length, 'emails');
-        return salvaged;
+      try {
+        const salvaged = salvageEmailsFromRaw(source);
+        if (salvaged.length > 0) {
+          console.log('✅ Salvage fallback succeeded:', salvaged.length, 'emails');
+          return salvaged;
+        }
+      } catch (e) {
+        console.warn('Salvage attempt failed:', e);
+        // Continue to next source
       }
     }
 
@@ -245,29 +250,39 @@ export default function EmailOutput({ workflowResults, campaignData, onStartOver
 
   // Salvage fallback for malformed JSON
   const salvageEmailsFromRaw = (raw: string): Array<{subject: string, body: string, email_number: number}> => {
-    if (!raw || typeof raw !== 'string') return [];
-    
-    // lenient subject grab
-    const subjMatch = raw.match(/"subject"\s*:\s*"([^"]{1,2000})"/i);
-    const subject = subjMatch?.[1] ?? "";
-    
-    // lenient body grab: find "body": "<string ...>"
-    const bodyMatch = raw.match(/"body"\s*:\s*"([^"]{1,5000})"/i);
-    let body = bodyMatch?.[1] ?? "";
-    
-    // decode common escape sequences
-    body = body.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t').replace(/\\"/g, '"');
-    
-    if (subject || body) {
-      console.log('🚑 Salvage fallback extracted email:', { subject: subject.slice(0, 50), bodyLength: body.length });
-      return [{
-        subject: subject || 'Personalized Outreach',
-        body: body || raw.slice(0, 1000), // worst case: show first 1k chars
-        email_number: 1
-      }];
+    try {
+      if (!raw || typeof raw !== 'string') return [];
+      
+      // lenient subject grab
+      const subjMatch = raw.match(/"subject"\s*:\s*"([^"]{1,2000})"/i);
+      const subject = subjMatch?.[1] ?? "";
+      
+      // lenient body grab: find "body": "<string ...>"
+      const bodyMatch = raw.match(/"body"\s*:\s*"([^"]{1,5000})"/i);
+      let body = bodyMatch?.[1] ?? "";
+      
+      // decode common escape sequences
+      if (body) {
+        body = body.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t').replace(/\\"/g, '"');
+      }
+      
+      if (subject || body) {
+        console.log('🚑 Salvage fallback extracted email:', { 
+          subject: (subject || 'Personalized Outreach').slice(0, 50), 
+          bodyLength: body.length 
+        });
+        return [{
+          subject: subject || 'Personalized Outreach',
+          body: body || raw.slice(0, 1000), // worst case: show first 1k chars
+          email_number: 1
+        }];
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('Error in salvageEmailsFromRaw:', error);
+      return [];
     }
-    
-    return [];
   };
 
   // Get raw agent output for fallback display

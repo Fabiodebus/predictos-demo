@@ -197,14 +197,21 @@ export default function HomePage() {
           if (line.startsWith('data: ')) {
             const dataStr = line.slice(6).trim();
             
-            // Check [DONE] FIRST, before any parsing
+            // Check [DONE] FIRST, before any parsing or buffering
             if (dataStr === '[DONE]') {
               console.log('Stream complete');
+              sseBuffer = ''; // Clear any accumulated buffer
               continue; // Skip to next line, don't try to parse
             }
             
             // Skip empty data
             if (!dataStr) continue;
+            
+            // Skip non-JSON frames (heartbeats, pings, etc)
+            if (!dataStr.startsWith('{') && !dataStr.startsWith('[')) {
+              console.log('Skipping non-JSON frame:', dataStr.slice(0, 50));
+              continue;
+            }
             
             // Accumulate data in buffer for handling large JSON
             sseBuffer += dataStr;
@@ -272,6 +279,13 @@ export default function HomePage() {
                   // Inject the final emails into results
                   workflowData.results.step5_email_generation.finalEmails = emails;
                   workflowData.results.step5_email_generation.rawAssistantText = rawAssistantText;
+                  
+                  // Mark as success if we have raw text OR emails, even without perfect parsing
+                  if (!workflowData.results.step5_email_generation.success && 
+                      (rawAssistantText || emails.length > 0)) {
+                    console.log('Setting success=true due to content availability');
+                    workflowData.results.step5_email_generation.success = true;
+                  }
                 }
                 
                 // Merge any partial results we collected
