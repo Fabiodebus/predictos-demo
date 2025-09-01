@@ -444,8 +444,10 @@ export default function HomePage() {
           <>
             <StreamingAgentReasoning streamingState={streamingWorkflow} />
 
-            {/* Show "See Email Copy" button when streaming is complete */}
-            {streamingWorkflow.workflowResults?.step5_email_generation?.success && !showEmailCopy && (
+            {/* Show "See Email Copy" button when we have emails OR raw text */}
+            {((streamingWorkflow.workflowResults?.step5_email_generation?.email_count ?? 0) > 0 || 
+              streamingWorkflow.workflowResults?.step5_email_generation?.rawAssistantText) && 
+              !showEmailCopy && (
               <div className="text-center mt-8">
                 <Button
                   onClick={handleSeeEmailCopy}
@@ -513,8 +515,10 @@ export default function HomePage() {
               />
             )}
 
-            {/* Original buttons for non-streaming mode */}
-            {workflowResults?.step5_email_generation?.success && !showEmailCopy && (
+            {/* Original buttons for non-streaming mode - show when we have emails OR raw text */}
+            {((workflowResults?.step5_email_generation?.email_count ?? 0) > 0 || 
+              workflowResults?.step5_email_generation?.rawAssistantText) && 
+              !showEmailCopy && (
               <div className="text-center mt-8">
                 <Button
                   onClick={handleSeeEmailCopy}

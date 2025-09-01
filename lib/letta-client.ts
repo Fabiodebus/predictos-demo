@@ -356,27 +356,48 @@ function* balancedObjects(src: string): Generator<{ start: number; end: number }
 export function extractCampaignJson(s: string): CampaignData | null {
   if (!s) return null;
 
+  // Helper to check if string looks like campaign JSON
+  const looksLikeCampaignish = (str: string) =>
+    str.includes('"campaign"') ||
+    str.includes('"campaign_emails"') ||
+    str.includes('"emails"') ||
+    str.includes('"email_sequence"');
+
   // 1) try ```json fenced blocks
   const blocks = Array.from(s.matchAll(/```json\s*([\s\S]*?)```/gi)).map(m => m[1].trim());
   for (const b of blocks) {
     try { 
       const o = JSON.parse(b); 
-      if (o && (o.campaign || /"campaign"\s*:/.test(b))) return o; 
+      if (o && typeof o === 'object' && 
+          (o.campaign || o.campaign_emails || o.emails || o.email_sequence)) {
+        console.log('✅ Extracted from JSON fence block');
+        return o;
+      }
     } catch {}
   }
 
-  // 2) scan whole string for balanced objects and pick the first that parses & contains "campaign"
+  // 2) scan whole string for balanced objects and pick the first that parses & contains campaign-like structure
   for (const { start, end } of balancedObjects(s)) {
     const candidate = s.slice(start, end);
-    if (!candidate.includes('"campaign"')) continue;
+    if (!looksLikeCampaignish(candidate)) continue;
     try { 
       const parsed = JSON.parse(candidate);
-      if (parsed && typeof parsed === 'object' && parsed.campaign) return parsed;
+      if (parsed && typeof parsed === 'object' && 
+          (parsed.campaign || parsed.campaign_emails || parsed.emails || parsed.email_sequence)) {
+        console.log('✅ Extracted from balanced object scan');
+        return parsed;
+      }
     } catch {}
   }
 
-  // 3) last resort: try progressive truncation from the right on the *last* candidate that contains "campaign"
-  const lastIdx = s.lastIndexOf('{"campaign"');
+  // 3) last resort: try progressive truncation from the right on the *last* candidate that contains campaign-like structure
+  const lastIdx = Math.max(
+    s.lastIndexOf('{"campaign"'),
+    s.lastIndexOf('{"campaign_emails"'),
+    s.lastIndexOf('{"emails"'),
+    s.lastIndexOf('{"email_sequence"')
+  );
+  
   if (lastIdx !== -1) {
     console.log('🔧 Attempting progressive truncation from position', lastIdx);
     // shrink from the end until parse succeeds or we give up
@@ -384,7 +405,8 @@ export function extractCampaignJson(s: string): CampaignData | null {
       const chunk = s.slice(lastIdx, e);
       try { 
         const parsed = JSON.parse(chunk);
-        if (parsed && typeof parsed === 'object') {
+        if (parsed && typeof parsed === 'object' && 
+            (parsed.campaign || parsed.campaign_emails || parsed.emails || parsed.email_sequence)) {
           console.log('✅ Progressive truncation succeeded at length', chunk.length);
           return parsed;
         }
@@ -410,6 +432,7 @@ export interface CampaignData {
   sequence?: {
     thread_1?: Record<string, EmailData>;
   };
+  campaign_emails?: EmailData[];  // NEW: handle campaign_emails structure
   emails?: EmailData[];
   email_sequence?: EmailData[];
   emails_de?: EmailData[];
@@ -461,60 +484,85 @@ export interface EmailData {
 export function mapCampaignToEmails(obj: CampaignData | Record<string, unknown>): Email[] {
   if (!obj || typeof obj !== 'object') return [];
 
-  const t = (x: unknown): string =>
-    typeof x === 'string' ? x : String((x as Record<string, unknown>)?.text ?? (x as Record<string, unknown>)?.content ?? '');
+  type AnyObj = Record<string, any>;
+  const c = obj as CampaignData & AnyObj;
+  const out: AnyObj[] = [];
 
-  const asEmail = (node: EmailData | Record<string, unknown> | undefined): Email | null => {
-    if (!node) return null;
-    const emailData = node as EmailData;
-    const subject = t(emailData.subject ?? emailData.subject_line ?? emailData.titel ?? emailData.betreff ?? '');
-    const body    = t(emailData.body ?? emailData.körper ?? emailData.inhalt ?? emailData.text ?? '');
-    const cta     = emailData.cta_type ?? emailData.cta ?? emailData.handlungsaufforderung;
-    if (!subject && !body) return null;
-    return { subject, body, cta_type: String(cta ?? '') };
-  };
+  // 1) Root-level arrays - check all possible array fields
+  if (Array.isArray(c.campaign_emails)) out.push(...c.campaign_emails);
+  if (Array.isArray(c.emails)) out.push(...c.emails);
+  if (Array.isArray(c.email_sequence)) out.push(...c.email_sequence);
+  if (Array.isArray(c.emails_de)) out.push(...c.emails_de);
+  if (Array.isArray(c.sequenz)) out.push(...c.sequenz);
 
-  const campaign = obj as CampaignData;
-  
-  // A) canonical nested thread
-  const t1 = campaign?.campaign?.thread_1 ?? campaign?.kampagne?.faden_1 ?? campaign?.sequence?.thread_1;
-  if (t1) {
-    const order = ['email_1','email_2','email_3','mail_1','mail_2','mail_3'];
-    const items = order.map(k => asEmail(t1[k])).filter(Boolean) as Email[];
-    if (items.length) return items.slice(0, 3);
+  // 2) Nested "campaign" (or German "kampagne") structures
+  const campaigns: AnyObj[] = [];
+  if (c.campaign && typeof c.campaign === 'object') campaigns.push(c.campaign);
+  if (c.kampagne && typeof c.kampagne === 'object') campaigns.push(c.kampagne);
+  if (c.sequence && typeof c.sequence === 'object') campaigns.push(c.sequence);
+
+  for (const camp of campaigns) {
+    // Check for thread structures
+    for (const key of Object.keys(camp)) {
+      if (/^(thread|faden)_\d+$/i.test(key)) {
+        const th = camp[key] || {};
+        if (Array.isArray(th.emails)) out.push(...th.emails);
+        if (Array.isArray(th.email_sequence)) out.push(...th.email_sequence);
+        // Check for email_N keys within thread
+        for (const ek of Object.keys(th)) {
+          if (/^(email|mail)_\d+$/i.test(ek) && th[ek]) out.push(th[ek]);
+        }
+      }
+    }
+    // Also allow flat emails array under campaign
+    if (Array.isArray(camp.emails)) out.push(...camp.emails);
+    // Check for email_N keys at campaign level
+    for (const ek of Object.keys(camp)) {
+      if (/^(email|mail)_\d+$/i.test(ek) && camp[ek]) out.push(camp[ek]);
+    }
   }
 
-  // B) arrays
-  const arrays =
-    campaign?.campaign?.thread_1?.emails ??
-    campaign?.campaign?.emails ??
-    campaign?.emails ??
-    campaign?.email_sequence ??
-    campaign?.emails_de ??
-    campaign?.sequenz;
-  if (Array.isArray(arrays)) {
-    const items = arrays.map(asEmail).filter(Boolean) as Email[];
-    if (items.length) return items.slice(0, 3);
+  // 3) Flat keys at root (email_1, mail_1, etc.)
+  for (const k of Object.keys(c)) {
+    if (/^(email|mail)_\d+$/i.test(k) && c[k]) out.push(c[k]);
   }
 
-  // C) flat keyed
-  const flat = ['email_1','email_2','email_3','mail_1','mail_2','mail_3']
-    .map(k => asEmail(campaign[k] as EmailData)).filter(Boolean) as Email[];
-  if (flat.length) return flat.slice(0, 3);
-
-  // D) extremely flat (subject_1/body_1 …)
-  const flat2: Email[] = [];
+  // 4) Extremely flat (subject_1/body_1 pairs)
   for (let i = 1; i <= 3; i++) {
-    const e = asEmail({
-      subject: campaign[`subject_${i}` as keyof CampaignData] ?? campaign[`betreff_${i}` as keyof CampaignData],
-      body:    campaign[`body_${i}` as keyof CampaignData]    ?? campaign[`inhalt_${i}` as keyof CampaignData] ?? campaign[`text_${i}` as keyof CampaignData],
-      cta:     campaign[`cta_${i}` as keyof CampaignData]
-    });
-    if (e) flat2.push(e);
+    const subjectKeys = [`subject_${i}`, `betreff_${i}`, `titel_${i}`];
+    const bodyKeys = [`body_${i}`, `körper_${i}`, `inhalt_${i}`, `text_${i}`];
+    
+    const subject = subjectKeys.map(k => c[k]).find(v => v && typeof v === 'string');
+    const body = bodyKeys.map(k => c[k]).find(v => v && typeof v === 'string');
+    
+    if (subject || body) {
+      out.push({ subject: subject || '', body: body || '' });
+    }
   }
-  if (flat2.length) return flat2;
 
-  return [];
+  // Normalize all collected emails
+  const emails = out.map(e => ({
+    subject: String(e?.subject ?? e?.betreff ?? e?.subject_line ?? e?.title ?? e?.titel ?? ''),
+    body: String(e?.body ?? e?.inhalt ?? e?.körper ?? e?.content ?? e?.text ?? ''),
+    cta_type: String(e?.cta_type ?? e?.call_to_action ?? e?.cta ?? '')
+  })).filter(e => e.subject || e.body);
+
+  // Deduplicate based on subject + body prefix
+  const seen = new Set<string>();
+  const dedupedEmails = emails.filter(e => {
+    const key = `${e.subject}:::${e.body.slice(0, 80)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  if (dedupedEmails.length === 0) {
+    console.warn('mapCampaignToEmails: Could not extract emails from:', JSON.stringify(obj).slice(0, 200));
+  } else {
+    console.log(`✅ Extracted ${dedupedEmails.length} unique emails`);
+  }
+
+  return dedupedEmails.slice(0, 3); // Return max 3 emails
 }
 
 // Export textify for use in other modules
